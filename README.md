@@ -1,24 +1,24 @@
 # MyChatBot
 
-Tauri 2 데스크톱 펫과 Java 21 / Spring Boot API로 구성된 사내 챗봇이다. 업무 문서를 검색해 답변하고, 사용자가 제출한 문서 제안을 관리자 승인 후 검색에 반영한다. 아래 경로는 모두 `AI_PET` 루트 기준이다.
+Tauri 2 데스크톱앱 Java 21 / Spring Boot API로 구성된 챗봇이다. 업무 문서를 검색해 답변하고, 사용자가 제출한 문서 제안을 관리자 승인 후 검색에 반영한다. 아래 경로는 모두 프로젝트 루트 기준이다.
 
 ## 내 조직에 맞게 바꾸기
 
-| 바꾸려는 것 | 파일 또는 설정 | 적용 방법 |
-| --- | --- | --- |
-| 챗봇이 읽을 업무 자료 | `data/knowledge/<프로젝트>/` | 파일을 넣으면 서버가 자동으로 다시 읽는다 |
-| 대화창 옆의 기본 펫 이미지 | `pet.png` | 같은 이름의 투명 PNG로 교체하고 앱을 다시 빌드한다 |
-| 드래그 중 펫 이미지 | `assets/pet/pet-drag.png` | 같은 이름의 투명 PNG로 교체하고 앱을 다시 빌드한다 |
-| 답변 대기 중 펫 이미지 | `assets/pet/pet-thinking.png` | 같은 이름의 투명 PNG로 교체하고 앱을 다시 빌드한다 |
-| 대화창의 이름·배지·테마 | `branding.json` | PC별 설정 파일을 저장한 뒤 앱을 종료하고 다시 연다 |
-| 설치 파일과 앱의 OS 아이콘 | `assets/pet/app-icon.png` | 정사각형 PNG를 교체하고 `.ico` 또는 `.icns`를 다시 생성해 패키징한다 |
-| macOS 메뉴 막대 아이콘 | `assets/pet/tray-icon-macos.png` | 단색 투명 PNG를 교체하고 앱을 다시 빌드한다. macOS가 배경에 맞춰 색을 적용한다 |
+| 바꾸려는 것            | 파일 또는 설정 | 적용 방법 |
+|-------------------| --- | --- |
+| 챗봇이 읽을 업무 자료      | `data/knowledge/<프로젝트>/` | 파일을 넣으면 서버가 자동으로 다시 읽는다 |
+| 대화창 옆의 기본 봇 이미지   | `pet.png` | 같은 이름의 투명 PNG로 교체하고 앱을 다시 빌드한다 |
+| 드래그 중 봇 이미지       | `assets/pet/pet-drag.png` | 같은 이름의 투명 PNG로 교체하고 앱을 다시 빌드한다 |
+| 답변 대기 중 봇 이미지     | `assets/pet/pet-thinking.png` | 같은 이름의 투명 PNG로 교체하고 앱을 다시 빌드한다 |
+| 대화창의 이름·배지·테마     | `branding.json` | PC별 설정 파일을 저장한 뒤 앱을 종료하고 다시 연다 |
+| 설치 파일과 앱의 OS 아이콘  | `assets/pet/app-icon.png` | 정사각형 PNG를 교체하고 `.ico` 또는 `.icns`를 다시 생성해 패키징한다 |
+| macOS 메뉴 막대 아이콘   | `assets/pet/tray-icon-macos.png` | 단색 투명 PNG를 교체하고 앱을 다시 빌드한다. macOS가 배경에 맞춰 색을 적용한다 |
 | Windows 알림 영역 아이콘 | `assets/pet/tray-icon.png` | 투명 PNG를 교체하고 앱을 다시 빌드한다 |
-| 앱이 접속할 API 주소 | `VITE_API_BASE_URL`, Tauri CSP `connect-src` | 두 곳에 같은 서버 주소를 지정하고 앱을 다시 빌드한다 |
+| 앱이 접속할 API 주소     | `VITE_API_BASE_URL`, Tauri CSP `connect-src` | 두 곳에 같은 서버 주소를 지정하고 앱을 다시 빌드한다 |
 
 ### 업무 자료와 챗봇 사용 안내 추가
 
-기본 자료 폴더는 `data/knowledge/`다. 서버가 시작할 때 지정된 자료 폴더와 색인 폴더가 없으면 자동으로 만든다. 새로 받은 저장소에서도 빈 자료 폴더를 미리 만들 필요가 없다. 예를 들어 `data/knowledge/syslink/엑셀-수집-절차.md`나 `data/knowledge/operations/정산-점검.xlsx`처럼 프로젝트 하위에 파일을 넣는다. 지원 프로젝트는 `paye2u`, `syslink`, `operations`, `notes`, `common`이며, `common` 폴더가 없으면 만들 수 있다. 서버가 하위 폴더까지 확인하며, 파일 경로와 문서 내용에 따라 프로젝트 분류가 달라질 수 있다. 검색과 원본 다운로드는 로그인 계정에 허용된 프로젝트 범위에서 동작한다.
+기본 자료 폴더는 `data/knowledge/`다. 서버가 시작할 때 지정된 자료 폴더와 색인 폴더가 없으면 자동으로 만든다. 새로 받은 저장소에서도 빈 자료 폴더를 미리 만들 필요가 없다. 예를 들어 `data/knowledge/user/엑셀-수집-절차.md`나 `data/knowledge/operations/점검.xlsx`처럼 프로젝트 하위에 파일을 넣는다. 지원 프로젝트는 `docs`, `user`, `operations`, `notes`, `common`이며, `common` 폴더가 없으면 만들 수 있다. 서버가 하위 폴더까지 확인하며, 파일 경로와 문서 내용에 따라 프로젝트 분류가 달라질 수 있다. 검색과 원본 다운로드는 로그인 계정에 허용된 프로젝트 범위에서 동작한다.
 
 - 매뉴얼은 Markdown(`.md`)로 작성하고, 자주 묻는 질문을 제목으로 쓰면 관련 내용을 찾기 쉽다. Excel, DOCX, PDF, TXT도 읽을 수 있다.
 - 로컬의 `docs/chatbot-user-guide.md`를 조직에 맞게 수정한 뒤 `/새문서`에서 `common`을 선택해 제출한다. 현재 서버가 지원하는 실제 프로젝트 이름과 폴더는 이 README에서 확인할 수 있다. `docs/`는 프로젝트 문서 보관 위치다.
@@ -32,10 +32,10 @@ Tauri 2 데스크톱 펫과 Java 21 / Spring Boot API로 구성된 사내 챗봇
 
 설치한 앱에서 PC별로 바꾸려면 아래 경로에 UTF-8로 `branding.json`을 저장한다. 폴더가 없으면 만든다. PC별 파일에 적은 항목만 배포 기본값을 덮어쓴다.
 
-| 운영체제 | 파일 경로 |
-| --- | --- |
-| macOS | `~/Library/Application Support/com.easytouse.ai-pet/branding.json` |
-| Windows | `%APPDATA%\com.easytouse.ai-pet\branding.json` |
+| 운영체제 | 파일 경로                                                         |
+| --- |---------------------------------------------------------------|
+| macOS | `~/Library/Application Support/com.user.ai-pet/branding.json` |
+| Windows | `%APPDATA%\com.user.ai-pet\branding.json`                |
 
 ```json
 {
@@ -50,9 +50,9 @@ Tauri 2 데스크톱 펫과 Java 21 / Spring Boot API로 구성된 사내 챗봇
 - `theme`은 `gold`(기본 노랑), `blue`(파랑), `green`(초록), `mono`(흰 화면에 검정 버튼과 회색 배지) 중에서 고른다. 버튼, 배지, 입력 포커스에 적용된다.
 - 프로젝트 루트 설정을 변경하면 다시 빌드해야 한다. PC별 설정을 변경하면 앱을 트레이 메뉴에서 **종료**하고 다시 열면 된다. PC별 설정이 없거나 잘못된 항목은 배포 기본값을 사용한다. 빌드 시 지정한 `VITE_CHATBOT_NAME`, `VITE_CHATBOT_BADGE`가 있으면 이름·배지의 기본값으로 사용한다.
 
-### 펫 이미지와 설치 아이콘 교체
+### 이미지와 설치 아이콘 교체
 
-`pet.png`를 교체하면 기본 펫의 모습이 바뀐다. 드래그하거나 답변을 기다릴 때도 같은 캐릭터를 표시하려면 `assets/pet/`의 상태 이미지 두 장도 함께 교체한다.
+`pet.png`를 교체하면 기본 챗봇의 모습이 바뀐다. 드래그하거나 답변을 기다릴 때도 같은 캐릭터를 표시하려면 `assets/pet/`의 상태 이미지 두 장도 함께 교체한다.
 
 Windows 설치 파일과 macOS 앱에 쓰는 아이콘은 `assets/pet/app-icon.png`에서 생성한다. `apps/desktop`에서 아래 명령을 실행하면 `src-tauri/target/generated-icons/`에 `icon.ico`와 `icon.icns`가 생성된다.
 
@@ -68,7 +68,7 @@ npm run tauri -- icon ../../assets/pet/app-icon.png --output src-tauri/target/ge
 AGENTS.md               # 메인 총괄/파일 소유권/보안 지침
 apps/desktop/           # TypeScript, Vanilla UI, Vite, Tauri 2
 services/api/            # WebFlux, Security, Groq/Mock, POI/Tika/Lucene
-assets/                 # 펫/브랜드 리소스 안내
+assets/                 # 챗봇/브랜드 리소스 안내
 pet.png                 # 사용자 원본
 data/knowledge/        # 기존 업무 자료, 원본 보존/Git 제외
 .local/knowledge-index/ # 파생 검색 인덱스/manifest/status/CSV, Git 제외
@@ -91,7 +91,7 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 
 로컬 API 기본 주소는 `http://127.0.0.1:9001`이다. `pet.api.projects`와 `pet.api.admin.projects`는 일반 계정과 관리자 계정의 권한을 각각 설정한다. 비워 두거나 생략하면 모든 지원 프로젝트에 접근할 수 있고, 범위를 제한하려면 프로젝트 ID를 쉼표로 지정한다. 미분류·격리 문서는 검색에서 제외한다. LAN/운영 노출 전에 조직 인증·사용자별 권한 원천·HTTPS를 연결해야 한다.
 
-현재 환경에서 Gradle 기본 캐시가 동작하지 않으면 `GRADLE_USER_HOME=/private/tmp/easytouse-gradle`를 지정한다. 네트워크가 없는 개발 검증은 명시적으로 `AI_PROVIDER=mock`을 설정한다. 설정 누락이나 공급자 오류를 조용히 Mock으로 바꾸지 않는다.
+현재 환경에서 Gradle 기본 캐시가 동작하지 않으면 `GRADLE_USER_HOME=/private/tmp/user-gradle`를 지정한다. 네트워크가 없는 개발 검증은 명시적으로 `AI_PROVIDER=mock`을 설정한다. 설정 누락이나 공급자 오류를 조용히 Mock으로 바꾸지 않는다.
 
 ### AI 공급자와 우선순위 설정
 
