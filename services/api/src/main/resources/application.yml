@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: my-chat-bot
+  config:
+    import: optional:file:./.secret/application.yml
+  main:
+    web-application-type: reactive
+    banner-mode: "off"
+  codec:
+    max-in-memory-size: 128KB
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+
+server:
+  address: 127.0.0.1
+  port: 9001
+  error:
+    include-message: never
+    include-stacktrace: never
+
+ai:
+  provider: groq,codex,claude,gemini,kimi
+  groq:
+    order: 10
+    api-key: ${GROQ_API_KEY:}
+  codex:
+    order: 20
+    api-key: ${OPENAI_API_KEY:}
+  claude:
+    order: 30
+    api-key: ${ANTHROPIC_API_KEY:}
+  gemini:
+    order: 40
+    api-key: ${GEMINI_API_KEY:}
+  kimi:
+    order: 50
+    api-key: ${MOONSHOT_API_KEY:}
+
+pet:
+  api:
+    requests-per-minute: 12
+
+knowledge:
+  root: ../../data/knowledge
+  index-path: ../../.local/knowledge-index
+  poll-ms: 5000

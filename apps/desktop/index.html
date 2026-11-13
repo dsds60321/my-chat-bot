@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#F4C542" />
+    <title>MyChatBot</title>
+  </head>
+  <body>
+    <main id="app">
+      <section id="panel" class="panel" aria-labelledby="panel-title" hidden>
+        <header class="panel-header">
+          <div><p class="eyebrow"><span data-chatbot-name>MyChatBot</span> <span data-chatbot-badge class="mock-badge">CHAT</span></p><h1 id="panel-title">무엇을 도와드릴까요?</h1></div>
+          <div class="window-actions"><button id="smaller" type="button" aria-label="대화창 작게" title="대화창 작게">−</button><button id="larger" type="button" aria-label="대화창 크게" title="대화창 크게">＋</button><button id="close" class="icon-button" type="button" aria-label="질문 창 닫기">×</button></div>
+        </header>
+        <form id="login-form" class="login-form">
+          <p>계정으로 접속하면 바로 질문할 수 있어요.</p>
+          <label for="api-user">사용자</label><input id="api-user" autocomplete="username" required />
+          <label for="api-password">비밀번호</label><input id="api-password" type="password" autocomplete="current-password" required />
+          <p id="login-error" class="login-error" role="alert" hidden></p><p class="login-note">로그인은 앱을 종료할 때까지 유지돼요.</p>
+          <button id="login" class="primary-button" type="submit">접속</button>
+        </form>
+        <div id="chat-tools" class="chat-tools" hidden>
+          <button id="open-proposal" type="button">문서 수정 제안</button>
+          <button id="open-history" type="button">내 제안</button>
+          <button id="open-review" type="button" hidden>제안 검토</button>
+          <button id="logout" type="button">로그아웃</button>
+        </div>
+        <section id="knowledge-panel" class="conversation knowledge-panel" tabindex="-1" aria-labelledby="knowledge-title" hidden>
+          <header class="knowledge-header">
+            <h2 id="knowledge-title" tabindex="-1">문서 수정 제안</h2>
+            <button id="close-knowledge" type="button">대화로 돌아가기</button>
+          </header>
+          <p id="knowledge-error" role="alert" hidden></p>
+          <form id="proposal-form" class="knowledge-form" hidden>
+            <label for="proposal-kind">제안 종류</label>
+            <select id="proposal-kind"><option value="update">기존 문서 수정</option><option value="new">새 문서 작성</option></select>
+            <div id="proposal-target" class="knowledge-form">
+              <label for="proposal-query">대상 문서 이름 또는 검색어</label>
+              <div class="knowledge-search"><input id="proposal-query" maxlength="4000" /><button id="proposal-search" type="button">찾기</button></div>
+              <fieldset id="proposal-targets" hidden><legend>수정할 문서 선택</legend><div id="proposal-options"></div></fieldset>
+            </div>
+            <div id="proposal-new" class="knowledge-form" hidden>
+              <label for="proposal-project">프로젝트</label><select id="proposal-project"></select>
+            </div>
+            <label for="proposal-instruction">무엇을 바꾸거나 추가할까요?</label>
+            <textarea id="proposal-instruction" rows="3" maxlength="4000" required></textarea>
+            <button id="proposal-preview" type="submit">초안 미리보기</button>
+            <section id="proposal-draft" class="knowledge-form" aria-label="제안 미리보기" hidden>
+              <div id="proposal-before-block"><h3>변경 전 · 원본 발췌</h3><p id="proposal-before" class="proposal-before"></p></div>
+              <label for="proposal-draft-title">제안 제목</label><input id="proposal-draft-title" maxlength="120" />
+              <label for="proposal-after">변경 후 · 편집 가능</label>
+              <textarea id="proposal-after" rows="7" maxlength="4000"></textarea>
+              <label id="proposal-consent-label"><input id="proposal-consent" type="checkbox" /> 이 제안이 검색에 반영되면 이 프로젝트를 조회할 수 있는 사용자에게 공유하는 데 동의합니다.</label>
+              <button id="proposal-submit" type="button" disabled>제안 제출</button>
+            </section>
+          </form>
+          <div id="knowledge-history" hidden></div>
+        </section>
+        <div id="conversation" hidden class="conversation" tabindex="0" role="region" aria-label="질문과 답변">
+          <div id="welcome" class="welcome"><h2>안녕하세요, 사내업무 봇입니다.</h2><p>궁금하신 사항을 물어보시거나 업무 지식을 학습시켜 주세요.</p></div>
+          <p id="question" class="question" hidden></p>
+          <div id="answer-block" hidden><div class="answer-heading"><strong data-chatbot-name>MyChatBot</strong><span id="answer-provider">서버 응답</span><button id="read-answer" type="button" disabled>새창 ↗</button><button id="copy" type="button">복사</button></div><p id="answer" class="answer"></p><h2 id="sources-heading" class="sources-heading" hidden>검색 참고 자료</h2><ul id="sources" class="sources" aria-labelledby="sources-heading" hidden></ul></div>
+        </div>
+        <form id="question-form" hidden>
+          <label class="sr-only" for="prompt">질문 입력</label>
+          <div class="composer"><textarea id="prompt" placeholder="궁금한 내용을 입력하세요" rows="2" maxlength="4000" required></textarea><button id="send" type="submit" aria-label="질문 전송">↑</button></div>
+          <div class="input-help"><span>Enter 전송 · Shift+Enter 줄바꿈</span><span id="count">0/4000</span></div>
+          <div class="request-actions"><button id="cancel" type="button" hidden>응답 취소</button><button id="retry" type="button" hidden>다시 시도</button></div>
+        </form>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+        <div id="resize-edges" class="resize-edges" aria-hidden="true">
+          <span data-resize="North"></span><span data-resize="South"></span>
+          <span data-resize="West"></span><span data-resize="East"></span>
+          <span data-resize="NorthWest"></span><span data-resize="NorthEast"></span>
+          <span data-resize="SouthWest"></span><span data-resize="SouthEast"></span>
+        </div>
+      </section>
+      <button id="pet" type="button" class="pet" aria-label="MyChatBot 열기. 드래그하면 이동합니다" aria-expanded="false" aria-controls="panel"><span class="pet-pose"><img id="pet-image" alt="" draggable="false" /></span><span class="pet-dot" aria-hidden="true"></span></button>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

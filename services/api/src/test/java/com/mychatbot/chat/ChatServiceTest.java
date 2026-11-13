@@ -1,0 +1,212 @@
+package com.mychatbot.chat;
+
+import com.mychatbot.ai.*;
+import com.mychatbot.knowledge.*;
+import com.mychatbot.security.AccessContext;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import reactor.core.publisher.Flux;
+import reactor.test.StepVerifier;
+import static org.assertj.core.api.Assertions.*;
+
+class ChatServiceTest {
+    private static SearchHit hit() { return new SearchHit("doc", "paye2u/table.md", "MCHT 정의", "paye2u", "database", "md", "1", "chunk", "MCHT", null, "MCHT 테이블에는 merchantId가 있어요.", 1, false); }
+    private static AiProvider provider(AtomicInteger calls) {
+        return provider("test", request -> { calls.incrementAndGet(); return Flux.just("답변"); });
+    }
+    private static AiProvider provider(String id, Function<AiRequest, Flux<String>> stream) {
+        return new AiProvider() {
+            public String id() { return id; }
+            public Flux<String> stream(AiRequest request) { return stream.apply(request); }
+        };
+    }
+    private static AiProviderRouter router(AiProvider provider) {
+        return router(provider.id(), provider);
+    }
+    private static AiProviderRouter router(String order, AiProvider... providers) {
+        AiProperties properties = new AiProperties(); properties.setProvider(order);
+        return new AiProviderRouter(properties, List.of(providers));
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"auto", "work"})
+    void emptyKnowledgeAnswersGreetingWithoutDocumentContext(String mode) {
+        AtomicInteger searches = new AtomicInteger();
+        AiProvider greeting = new AiProvider() {
+            public String id() { return "test"; }
+            public Flux<String> stream(AiRequest request) {
+                assertThat(request.question()).isEqualTo("안녕");
+                assertThat(request.context()).isEmpty();
+                return Flux.just("안녕하세요!");
+            }
+        };
+        ChatService service = new ChatService(router(greeting), (q, projects, limit) -> {
+            searches.incrementAndGet();
+            return List.of();
+        });
+        var events = service.stream(new ChatRequest("안녕", mode), new AccessContext("u", Set.of("paye2u")), "id").collectList().block();
+        assertThat(searches).hasValue(1);
+        assertThat(events).extracting(StreamEvent::event).containsExactly("sources", "delta", "done");
+        assertThat(events.get(0).data()).isEqualTo(java.util.Map.of("items", List.of()));
+        assertThat(events.get(1).data()).isEqualTo(new StreamEvent.Delta("안녕하세요!"));
+        assertThat(events.get(2).data()).isEqualTo(new StreamEvent.Done("id", "test"));
+    }
+
+    @Test void workSearchUsesTrustedProjectsAndSourcesDoNotContainText() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        ChatService service = new ChatService(router(provider(calls)), (q, projects, limit) -> {
+            assertThat(projects).containsExactly("paye2u"); return List.of(hit());
+        });
+        var events = service.stream(new ChatRequest("MCHT 컬럼", null), new AccessContext("u", Set.of("paye2u")), "id").collectList().block();
+        assertThat(calls).hasValue(1);
+        String json = new ObjectMapper().writeValueAsString(events.getFirst().data());
+        assertThat(json).contains("MCHT 정의", "documentId").doesNotContain("merchantId", "\"text\"");
+    }
+
+    @Test void generalModeDoesNotSearchAndSensitiveQuestionNeverReachesProvider() {
+        AtomicInteger calls = new AtomicInteger();
+        ChatService service = new ChatService(router(provider(calls)), (q, projects, limit) -> { throw new AssertionError("general must not search"); });
+        StepVerifier.create(service.stream(new ChatRequest("Java final 변수", "general"), new AccessContext("u", Set.of("paye2u")), "id"))
+                .expectNextMatches(event -> event.event().equals("sources"))
+                .expectNextMatches(event -> event.event().equals("delta"))
+                .expectNextMatches(event -> event.event().equals("done")).verifyComplete();
+        assertThat(calls).hasValue(1);
+        StepVerifier.create(service.stream(new ChatRequest("password=do-not-send-me", "general"), new AccessContext("u", Set.of()), "id"))
+                .expectNextMatches(event -> event.data() instanceof StreamEvent.Failure error && error.code().equals("SENSITIVE_INPUT")).verifyComplete();
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test void autoWithoutGrantsSkipsSearchButCallsProvider() {
+        AtomicInteger calls = new AtomicInteger();
+        ChatService service = new ChatService(router(provider(calls)), (q, projects, limit) -> {
+            throw new AssertionError("No grants means no search");
+        });
+        var events = service.stream(new ChatRequest("안녕", null), new AccessContext("u", Set.of()), "id").collectList().block();
+        assertThat(events).extracting(StreamEvent::event).containsExactly("sources", "delta", "done");
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test void explicitMockRoutingAndUnknownProvider() {
+        var request = new AiRequest("안녕", "");
+        StepVerifier.create(router("mock", new MockAiProvider()).route(request, text -> text, id -> id))
+                .expectNextCount(2).expectNext("mock").verifyComplete();
+        assertThatThrownBy(() -> router("unknown").route(request, text -> text, id -> id))
+                .isInstanceOf(AiException.class).hasMessage("사용할 AI 공급자를 설정해 주세요.");
+    }
+
+    @Test void fallsBackInConfiguredOrderBeforeAnyTextAndReportsActualProvider() {
+        List<String> attempts = new ArrayList<>();
+        AiProvider first = provider("groq", request -> {
+            attempts.add("groq");
+            return Flux.error(new AiException("RATE_LIMITED", "한도 초과", 30));
+        });
+        AiProvider second = provider("claude", request -> {
+            attempts.add("claude");
+            return Flux.error(new AiException("PROVIDER_NOT_CONFIGURED", "키 없음"));
+        });
+        AiProvider third = provider("gemini", request -> {
+            attempts.add("gemini");
+            assertThat(request.context()).contains("MCHT 테이블");
+            return Flux.just("답변");
+        });
+        AiProvider unused = provider("kimi", request -> { throw new AssertionError("unexpected fallback"); });
+        AtomicInteger searches = new AtomicInteger();
+        ChatService service = new ChatService(router("groq, claude,gemini,kimi", unused, third, first, second),
+                (q, projects, limit) -> { searches.incrementAndGet(); return List.of(hit()); });
+        StepVerifier.create(service.stream(new ChatRequest("MCHT", null), new AccessContext("u", Set.of("paye2u")), "id"))
+                .expectNextMatches(event -> event.event().equals("sources"))
+                .expectNext(new StreamEvent("delta", new StreamEvent.Delta("답변")))
+                .expectNext(new StreamEvent("done", new StreamEvent.Done("id", "gemini")))
+                .expectComplete().verify(Duration.ofSeconds(5));
+        assertThat(attempts).containsExactly("groq", "claude", "gemini");
+        assertThat(searches).hasValue(1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"groq,groq", "groq,unknown", "groq,mock", "groq,"})
+    void invalidOrderFailsBeforeAnyCall(String order) {
+        AiProvider first = provider("groq", request -> { throw new AssertionError("unexpected call"); });
+        ChatService service = new ChatService(router(order, first, new MockAiProvider()), (q, p, l) -> List.of());
+        StepVerifier.create(service.stream(new ChatRequest("안녕", null), new AccessContext("u", Set.of()), "id"))
+                .expectNextMatches(event -> event.data() instanceof StreamEvent.Failure failure
+                        && failure.code().equals("PROVIDER_NOT_CONFIGURED"))
+                .expectComplete().verify(Duration.ofSeconds(5));
+    }
+
+    @Test void doesNotFallBackAfterTextOrForNonQuotaErrors() {
+        var request = new AiRequest("안녕", "");
+        AiProvider unused = provider("claude", req -> { throw new AssertionError("unexpected fallback"); });
+        var partialFailure = new AiException("RATE_LIMITED", "한도 초과");
+        AiProvider partial = provider("groq", req -> Flux.just("부분 답변").concatWith(Flux.error(partialFailure)));
+        StepVerifier.create(router("groq,claude", partial, unused).route(request, text -> text, id -> id))
+                .expectNext("부분 답변").expectErrorMatches(error -> error == partialFailure).verify(Duration.ofSeconds(5));
+        var unavailable = new AiException("UPSTREAM_UNAVAILABLE", "연결 중단");
+        AiProvider failed = provider("groq", req -> Flux.error(unavailable));
+        StepVerifier.create(router("groq,claude", failed, unused).route(request, text -> text, id -> id))
+                .expectErrorMatches(error -> error == unavailable).verify(Duration.ofSeconds(5));
+    }
+
+    @Test void successStopsTheChainAndTrailingMissingKeyPreservesQuotaFailure() {
+        var request = new AiRequest("안녕", "");
+        AiProvider first = provider("groq", req -> Flux.just("답변"));
+        AiProvider unused = provider("claude", req -> { throw new AssertionError("unexpected fallback"); });
+        StepVerifier.create(router("groq,claude", first, unused).route(request, text -> text, id -> id))
+                .expectNext("답변", "groq").expectComplete().verify(Duration.ofSeconds(5));
+        var limit = new AiException("RATE_LIMITED", "한도 초과", 30);
+        AiProvider limited = provider("groq", req -> Flux.error(limit));
+        AiProvider missingKey = provider("claude", req -> Flux.error(new AiException("PROVIDER_NOT_CONFIGURED", "키 없음")));
+        StepVerifier.create(router("groq,claude", limited, missingKey).route(request, text -> text, id -> id))
+                .expectErrorMatches(error -> error == limit).verify(Duration.ofSeconds(5));
+    }
+
+    @Test void cancellationWhileFirstProviderIsPendingDoesNotStartFallback() {
+        AiProvider pending = provider("groq", req -> Flux.never());
+        AiProvider unused = provider("claude", req -> { throw new AssertionError("unexpected fallback"); });
+        StepVerifier.withVirtualTime(() -> router("groq,claude", pending, unused)
+                .route(new AiRequest("안녕", ""), text -> text, id -> id))
+                .expectSubscription().expectNoEvent(Duration.ofSeconds(1)).thenCancel().verify(Duration.ofSeconds(5));
+    }
+
+    @Test void oneDeadlineCoversAllAttempts() {
+        AiProperties settings = new AiProperties();
+        settings.setProvider("groq,claude");
+        settings.setRequestTimeout(Duration.ofSeconds(5));
+        AiProvider slowQuotaFailure = provider("groq", req -> Flux.just("unused").delayElements(Duration.ofSeconds(3))
+                .thenMany(Flux.error(new AiException("RATE_LIMITED", "한도 초과"))));
+        AiProvider slowSuccess = provider("claude", req -> Flux.just("늦은 답변").delayElements(Duration.ofSeconds(3)));
+        var router = new AiProviderRouter(settings, List.of(slowQuotaFailure, slowSuccess));
+        StepVerifier.withVirtualTime(() -> router.route(new AiRequest("안녕", ""), text -> text, id -> id))
+                .expectSubscription().expectNoEvent(Duration.ofSeconds(4)).thenAwait(Duration.ofSeconds(1))
+                .expectErrorMatches(error -> error instanceof AiException ai && ai.code().equals("UPSTREAM_TIMEOUT"))
+                .verify(Duration.ofSeconds(5));
+    }
+
+    @Test void rateAndConcurrentRequestsAreBoundedAndLeaseReleaseIsIdempotent() {
+        AtomicLong now = new AtomicLong();
+        RequestLimiter limiter = new RequestLimiter(2, now::get);
+        RequestLimiter.Lease first = limiter.acquire("u");
+        assertThatThrownBy(() -> limiter.acquire("u")).isInstanceOfSatisfying(AiException.class,
+                error -> assertThat(error.retryAfterSeconds()).isNull());
+        first.close(); first.close();
+        limiter.acquire("u").close();
+        now.set(12_200_000_000L);
+        assertThatThrownBy(() -> limiter.acquire("u")).isInstanceOfSatisfying(AiException.class, error -> {
+            assertThat(error.code()).isEqualTo("LOCAL_RATE_LIMITED");
+            assertThat(error.retryAfterSeconds()).isEqualTo(48);
+        });
+        limiter.acquire("different-user").close();
+        now.set(60_000_000_000L);
+        limiter.acquire("u").close();
+    }
+}

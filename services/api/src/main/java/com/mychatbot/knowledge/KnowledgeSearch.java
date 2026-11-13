@@ -1,0 +1,9 @@
+package com.mychatbot.knowledge;
+
+import java.util.List;
+import java.util.Set;
+
+/** Common search boundary for official documents and future explicitly approved knowledge. */
+public interface KnowledgeSearch {
+    List<SearchHit> search(String question, Set<String> projects, int limit);
+}

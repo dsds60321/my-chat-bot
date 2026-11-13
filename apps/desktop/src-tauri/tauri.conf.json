@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MyChatBot",
+  "version": "0.1.0",
+  "identifier": "com.easytouse.ai-pet",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [{
+      "label": "main",
+      "title": "MyChatBot",
+      "width": 128,
+      "height": 128,
+      "visible": false,
+      "transparent": true,
+      "decorations": false,
+      "alwaysOnTop": true,
+      "visibleOnAllWorkspaces": true,
+      "resizable": false,
+      "maximizable": false,
+      "minimizable": false,
+      "skipTaskbar": true,
+      "shadow": false,
+      "center": true
+    }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost; connect-src ipc: http://ipc.localhost http://127.0.0.1:9001; object-src 'none'; base-uri 'none'; form-action 'none'"
+    }
+  },
+  "bundle": { "active": false, "publisher": "MyChatBot", "icon": ["../../../assets/pet/app-icon.png"] }
+}

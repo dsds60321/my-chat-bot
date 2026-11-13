@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "answer-reader",
+  "description": "The bundled read-only answer window can listen for snapshots and toggle its own pin. It cannot access main geometry or credentials.",
+  "windows": ["answer"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "core:event:allow-emit-to", "core:window:allow-set-always-on-top"]
+}

@@ -1,0 +1,22 @@
+[package]
+name = "my-chat-bot"
+version = "0.1.0"
+description = "MyChatBot desktop"
+authors = ["EasyTouse"]
+edition = "2021"
+rust-version = "1.90"
+
+[lib]
+name = "my_chat_bot_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "macos-private-api", "image-png"] }
+tauri-plugin-window-state = "2"
+tauri-plugin-single-instance = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
