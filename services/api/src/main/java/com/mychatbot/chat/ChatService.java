@@ -24,7 +24,7 @@ public class ChatService {
     public Flux<StreamEvent> stream(ChatRequest request, AccessContext access, String requestId) {
         return Mono.fromCallable(() -> {
             if (!SensitiveData.guard(request.question())) throw new AiException("SENSITIVE_INPUT", "비밀정보로 보이는 내용은 전송할 수 없어요. 제거한 뒤 질문해 주세요.");
-            return "general".equals(request.mode()) || access.projects().isEmpty()
+            return access.projects().isEmpty()
                     ? List.<SearchHit>of() : search.search(request.question(), access.projects(), 4);
         }).subscribeOn(Schedulers.boundedElastic()).flatMapMany(hits -> {
             StringBuilder context = new StringBuilder();
@@ -39,6 +39,11 @@ public class ChatService {
                 included.add(SourceMetadata.from(hit));
             }
             StreamEvent sources = new StreamEvent("sources", Map.of("items", included));
+            if (included.isEmpty()) {
+                return Flux.just(sources, new StreamEvent("delta", new StreamEvent.Delta(
+                        "현재 접근 가능한 업무 문서에서 관련 내용을 찾지 못했어요.\n\n관련 내용을 알고 계시다면 챗봇이 참고할 수 있도록 학습시켜 주세요. 상단의 ‘문서 수정 제안’ → ‘새 문서 작성’에서 내용을 작성하고 공유에 동의한 뒤 ‘제안 제출’을 눌러 주세요. 관리자 승인 후 검색에 반영되며, 직접 반영 권한이 있으면 바로 반영됩니다.")),
+                        new StreamEvent("done", new StreamEvent.Done(requestId, "documents")));
+            }
             return Flux.concat(Flux.just(sources), router.route(new AiRequest(request.question(), context.toString()),
                     text -> new StreamEvent("delta", new StreamEvent.Delta(text)),
                     provider -> new StreamEvent("done", new StreamEvent.Done(requestId, provider))));

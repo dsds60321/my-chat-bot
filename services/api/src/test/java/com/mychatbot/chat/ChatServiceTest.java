@@ -41,26 +41,15 @@ class ChatServiceTest {
     @ParameterizedTest
     @NullSource
     @ValueSource(strings = {"auto", "work"})
-    void emptyKnowledgeAnswersGreetingWithoutDocumentContext(String mode) {
-        AtomicInteger searches = new AtomicInteger();
-        AiProvider greeting = new AiProvider() {
-            public String id() { return "test"; }
-            public Flux<String> stream(AiRequest request) {
-                assertThat(request.question()).isEqualTo("안녕");
-                assertThat(request.context()).isEmpty();
-                return Flux.just("안녕하세요!");
-            }
-        };
-        ChatService service = new ChatService(router(greeting), (q, projects, limit) -> {
-            searches.incrementAndGet();
-            return List.of();
-        });
-        var events = service.stream(new ChatRequest("안녕", mode), new AccessContext("u", Set.of("paye2u")), "id").collectList().block();
-        assertThat(searches).hasValue(1);
+    void emptyKnowledgeNeverCallsProvider(String mode) {
+        AtomicInteger calls = new AtomicInteger();
+        var service = new ChatService(router(provider(calls)), (q, p, l) -> List.of());
+        var events = service.stream(new ChatRequest("서브페이 빌드 방법", mode),
+                new AccessContext("u", Set.of("paye2u")), "id").collectList().block();
+        assertThat(calls).hasValue(0);
         assertThat(events).extracting(StreamEvent::event).containsExactly("sources", "delta", "done");
-        assertThat(events.get(0).data()).isEqualTo(java.util.Map.of("items", List.of()));
-        assertThat(events.get(1).data()).isEqualTo(new StreamEvent.Delta("안녕하세요!"));
-        assertThat(events.get(2).data()).isEqualTo(new StreamEvent.Done("id", "test"));
+        assertThat(events.get(1).data()).isInstanceOfSatisfying(StreamEvent.Delta.class,
+                delta -> assertThat(delta.text()).contains("문서에서 관련 내용을 찾지 못", "학습시켜 주세요", "문서 수정 제안", "새 문서 작성", "제안 제출"));
     }
 
     @Test void workSearchUsesTrustedProjectsAndSourcesDoNotContainText() throws Exception {
@@ -74,9 +63,9 @@ class ChatServiceTest {
         assertThat(json).contains("MCHT 정의", "documentId").doesNotContain("merchantId", "\"text\"");
     }
 
-    @Test void generalModeDoesNotSearchAndSensitiveQuestionNeverReachesProvider() {
+    @Test void generalModeAlsoRequiresDocumentsAndSensitiveQuestionNeverReachesProvider() {
         AtomicInteger calls = new AtomicInteger();
-        ChatService service = new ChatService(router(provider(calls)), (q, projects, limit) -> { throw new AssertionError("general must not search"); });
+        ChatService service = new ChatService(router(provider(calls)), (q, projects, limit) -> List.of(hit()));
         StepVerifier.create(service.stream(new ChatRequest("Java final 변수", "general"), new AccessContext("u", Set.of("paye2u")), "id"))
                 .expectNextMatches(event -> event.event().equals("sources"))
                 .expectNextMatches(event -> event.event().equals("delta"))
@@ -87,14 +76,14 @@ class ChatServiceTest {
         assertThat(calls).hasValue(1);
     }
 
-    @Test void autoWithoutGrantsSkipsSearchButCallsProvider() {
+    @Test void autoWithoutGrantsNeverCallsProvider() {
         AtomicInteger calls = new AtomicInteger();
         ChatService service = new ChatService(router(provider(calls)), (q, projects, limit) -> {
             throw new AssertionError("No grants means no search");
         });
         var events = service.stream(new ChatRequest("안녕", null), new AccessContext("u", Set.of()), "id").collectList().block();
         assertThat(events).extracting(StreamEvent::event).containsExactly("sources", "delta", "done");
-        assertThat(calls).hasValue(1);
+        assertThat(calls).hasValue(0);
     }
 
     @Test void explicitMockRoutingAndUnknownProvider() {
@@ -137,8 +126,8 @@ class ChatServiceTest {
     @ValueSource(strings = {"groq,groq", "groq,unknown", "groq,mock", "groq,"})
     void invalidOrderFailsBeforeAnyCall(String order) {
         AiProvider first = provider("groq", request -> { throw new AssertionError("unexpected call"); });
-        ChatService service = new ChatService(router(order, first, new MockAiProvider()), (q, p, l) -> List.of());
-        StepVerifier.create(service.stream(new ChatRequest("안녕", null), new AccessContext("u", Set.of()), "id"))
+        ChatService service = new ChatService(router(order, first, new MockAiProvider()), (q, p, l) -> List.of(hit()));
+        StepVerifier.create(service.stream(new ChatRequest("안녕", null), new AccessContext("u", Set.of("paye2u")), "id"))
                 .expectNextMatches(event -> event.data() instanceof StreamEvent.Failure failure
                         && failure.code().equals("PROVIDER_NOT_CONFIGURED"))
                 .expectComplete().verify(Duration.ofSeconds(5));

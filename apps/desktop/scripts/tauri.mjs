@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { cleanBuildOutputs } from './clean-build.mjs';
 
 const args = process.argv.slice(2);
 if (['build', 'bundle', 'dev'].includes(args[0])) {
@@ -14,6 +16,8 @@ if (['build', 'bundle', 'dev'].includes(args[0])) {
 }
 const require = createRequire(import.meta.url);
 const cli = require.resolve('@tauri-apps/cli/tauri.js');
+const output = cleanBuildOutputs(args, fileURLToPath(new URL('../src-tauri/target/', import.meta.url)));
+if (output) console.log(`이전 배포 산출물 정리 완료: ${output}`);
 const result = spawnSync(process.execPath, [cli, ...args], { stdio: 'inherit', env: process.env });
 if (result.error) throw result.error;
 process.exit(result.status ?? 1);

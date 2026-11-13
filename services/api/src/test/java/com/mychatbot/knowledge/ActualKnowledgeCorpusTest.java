@@ -9,6 +9,20 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 /** Opt-in, read-only source validation; artifacts go exclusively to .local/knowledge-index. */
 @EnabledIfEnvironmentVariable(named = "KNOWLEDGE_CORPUS_TEST", matches = "true")
 class ActualKnowledgeCorpusTest {
+    @Test void subpayQuestionFindsWbsSetupRow(@org.junit.jupiter.api.io.TempDir Path index) throws Exception {
+        Path project = Path.of("../..").toRealPath();
+        try (var service = new KnowledgeService(project.resolve("data/knowledge"), index.toRealPath())) {
+            assertThat(service.search("서브페이 빌드 방법", KnowledgeService.SUPPORTED_PROJECTS, 4))
+                    .anyMatch(hit -> hit.text().contains("서브페이"));
+            var hits = service.search("서브페이 빌드 방법", Set.of("paye2u", "syslink"), 4);
+            assertThat(hits).anySatisfy(hit -> {
+                assertThat(hit.path()).isEqualTo("E2U_WBS.xlsx");
+                assertThat(hit.section()).contains("업무사항");
+                assertThat(hit.text()).contains("서브페이");
+            });
+        }
+    }
+
     @Test void parsesTheExistingCorpusAndReportsOnlyCountsAndSourceMetadata() throws Exception {
         Path project = Path.of("../..").toRealPath();
         try (var input = java.nio.file.Files.newInputStream(project.resolve("data/knowledge/E2U_WBS.xlsx"));
