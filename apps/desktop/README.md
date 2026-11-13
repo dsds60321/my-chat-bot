@@ -21,23 +21,6 @@ Node 22.12 이상과 검증된 Rust stable 1.99.1, 해당 OS의 Tauri 빌드 도
 
 macOS 투명을 위해 Tauri의 `macos-private-api`가 필요합니다. 현재 배포 번들은 비활성입니다. 서명/스토어 배포, 실기기 다중 모니터/화면 배율/스크린리더 동작은 별도 검증이 필요합니다.
 
-macOS에서 UI 검증용 `.app`이 필요하면 아래 순서로 생성합니다. 흰 바탕의 앱 아이콘 원본은 `assets/pet/app-icon.png`이고 macOS 메뉴 막대 아이콘은 `assets/pet/tray-icon-macos.png`입니다. Rust/Cargo가 PATH에 있어야 합니다.
-
-```sh
-npm run tauri -- icon ../../assets/pet/app-icon.png --output src-tauri/target/generated-icons
-npm run tauri -- build --debug --bundles app --config '{"bundle":{"active":true,"icon":["../../../assets/pet/app-icon.png","target/generated-icons/icon.icns"]}}'
-```
-
-결과는 `src-tauri/target/debug/bundle/macos/MyChatBot.app`입니다. 서명된 배포 설치 파일은 아닙니다.
-
-Windows x64 배포판은 macOS에서 `cargo-xwin`, `x86_64-pc-windows-msvc` Rust 타깃, PATH의 LLVM·LLD·NSIS로 빌드한다. 위의 아이콘 생성 명령을 실행하고, `src-tauri/target/windows-bundle.json`에 NSIS 번들과 `target/generated-icons/icon.ico`를 지정한다. 기본 Tauri CSP를 복사해 `connect-src`의 로컬 API 주소를 배포 서버 주소로 교체한다.
-
-```sh
-VITE_API_BASE_URL=http://your-api-host:9001 npm run tauri -- build --runner cargo-xwin --target x86_64-pc-windows-msvc --config src-tauri/target/windows-bundle.json
-```
-
-설치 파일은 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`에 생성된다. 이 빌드는 사내망 테스트용이다. HTTP에서는 Basic 인증 정보가 전송 중 암호화되지 않는다.
-
-이전 제품명으로 설치된 Windows 앱에서 전환하려면 기존 앱을 종료하고 제거한 뒤 `MyChatBot` 설치 파일을 실행한다. 창 위치와 크기를 보존하려면 제거할 때 앱 데이터 삭제 옵션을 선택하지 않는다. macOS에서는 이전 앱을 종료한 뒤 `MyChatBot.app`을 열고 필요하면 Dock 바로가기를 교체한다.
+배포 빌드 명령, 서버 주소 설정, macOS·Windows 산출물 경로와 전달 방법은 [루트 README의 앱 빌드와 사용자에게 전달하기](../../README.md#앱-빌드와-사용자에게-전달하기)를 따른다. 앱 이름은 프로젝트 루트 `branding.json`의 `appTitle`에서 지정한다.
 
 화면의 이름·배지·테마는 [루트 README](../../README.md#이름배지테마-변경)의 `branding.json`으로 설정합니다.

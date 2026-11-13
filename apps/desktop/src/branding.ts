@@ -3,13 +3,17 @@ import projectBranding from '../../../branding.json' with { type: 'json' };
 
 type Theme = 'gold' | 'blue' | 'green' | 'mono';
 
-export function parseBranding(value: unknown, defaults: { name: string; badge: string; theme: Theme } = { name: 'MyChatBot', badge: 'CHAT', theme: 'gold' }) {
+export function parseBranding(value: unknown, defaults: { appTitle?: string; name: string; badge: string; theme: Theme } = { name: 'MyChatBot', badge: 'CHAT', theme: 'gold' }) {
   const config = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const name = typeof config.name === 'string' ? config.name.trim() : '';
+  const appTitle = typeof config.appTitle === 'string' ? config.appTitle.trim() : '';
+  const resolvedName = name && name.length <= 40 ? name : defaults.name;
   const badge = typeof config.badge === 'string' ? config.badge.trim() : null;
   const theme = config.theme;
   return {
-    name: name && name.length <= 40 ? name : defaults.name,
+    appTitle: appTitle && appTitle.length <= 40 && !/[\x00-\x1f]/u.test(appTitle)
+      ? appTitle : defaults.appTitle ?? resolvedName,
+    name: resolvedName,
     badge: badge !== null && badge.length <= 20 ? badge : defaults.badge,
     theme: theme === 'gold' || theme === 'blue' || theme === 'green' || theme === 'mono' ? theme : defaults.theme,
   };
@@ -29,7 +33,11 @@ export async function applyBranding(): Promise<void> {
       if (content !== null) config = JSON.parse(content);
     } catch { /* Use defaults when the local configuration is unreadable. */ }
   }
-  const { name, badge, theme } = parseBranding(config, defaults);
+  const { appTitle, name, badge, theme } = parseBranding(config, defaults);
+  if (isTauri() && document.getElementById('pet')) {
+    await invoke('set_branding_name', { name: appTitle });
+  }
+  document.title = document.getElementById('pet') ? appTitle : `${appTitle} · 답변`;
   document.documentElement.dataset.theme = theme;
   for (const element of document.querySelectorAll('[data-chatbot-name]')) element.textContent = name;
   for (const element of document.querySelectorAll<HTMLElement>('[data-chatbot-badge]')) {

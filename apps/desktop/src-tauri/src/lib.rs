@@ -16,6 +16,28 @@ fn require_window(window: &tauri::WebviewWindow, label: &str) -> Result<(), Stri
     if window.label() == label { Ok(()) } else { Err("허용되지 않은 창입니다.".into()) }
 }
 
+struct TrayLabels {
+    show: MenuItem<tauri::Wry>,
+    hide: MenuItem<tauri::Wry>,
+}
+
+#[tauri::command]
+fn set_branding_name(app: tauri::AppHandle, window: tauri::WebviewWindow, name: String,
+                     labels: tauri::State<'_, TrayLabels>) -> Result<(), String> {
+    require_window(&window, "main")?;
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 40 || name.chars().any(char::is_control) {
+        return Err("앱 이름을 확인해 주세요.".into());
+    }
+    labels.show.set_text(format!("{name} 표시")).map_err(|_| "메뉴 이름을 변경하지 못했어요.")?;
+    labels.hide.set_text(format!("{name} 숨김")).map_err(|_| "메뉴 이름을 변경하지 못했어요.")?;
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        tray.set_tooltip(Some(name)).map_err(|_| "앱 이름을 변경하지 못했어요.")?;
+    }
+    window.set_title(name).map_err(|_| "창 이름을 변경하지 못했어요.")?;
+    Ok(())
+}
+
 #[tauri::command]
 fn read_branding(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Option<String> {
     if !matches!(window.label(), "main" | "answer") { return None; }
@@ -212,7 +234,7 @@ fn show_pet(app: &tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .manage(AnswerState::default())
-        .invoke_handler(tauri::generate_handler![read_branding, open_answer, read_answer, close_answer, save_source, pet_drag_button_down])
+        .invoke_handler(tauri::generate_handler![set_branding_name, read_branding, open_answer, read_answer, close_answer, save_source, pet_drag_button_down])
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_pet(app)))
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -225,11 +247,12 @@ pub fn run() {
             let hide = MenuItem::with_id(app, "hide", "My Bot 숨김", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
+            app.manage(TrayLabels { show, hide });
             #[cfg(target_os = "macos")]
             let icon = tauri::image::Image::from_bytes(include_bytes!("../../../../assets/pet/tray-icon-macos.png"))?;
             #[cfg(not(target_os = "macos"))]
             let icon = tauri::image::Image::from_bytes(include_bytes!("../../../../assets/pet/tray-icon.png"))?;
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id("main-tray")
                 .icon(icon)
                 .icon_as_template(cfg!(target_os = "macos"))
                 .tooltip("My Bot")

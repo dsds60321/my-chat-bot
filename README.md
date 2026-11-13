@@ -34,18 +34,20 @@ Tauri 2 데스크톱앱 Java 21 / Spring Boot API로 구성된 챗봇이다. 업
 
 | 운영체제 | 파일 경로                                                         |
 | --- |---------------------------------------------------------------|
-| macOS | `~/Library/Application Support/com.user.ai-pet/branding.json` |
-| Windows | `%APPDATA%\com.user.ai-pet\branding.json`                |
+| macOS | `~/Library/Application Support/com.easytouse.ai-pet/branding.json` |
+| Windows | `%APPDATA%\com.easytouse.ai-pet\branding.json`                |
 
 ```json
 {
-  "name": "MyChatBot",
+  "appTitle": "MyChatBot",
+  "name": "사내 챗봇",
   "badge": "우리 회사",
   "theme": "mono"
 }
 ```
 
-- `name`은 로그인·대화창·답변 새창의 표시 이름이다. 기본값은 `MyChatBot`이다.
+- `appTitle`은 앱·창·트레이 이름이다. 프로젝트 루트 설정은 `npm run tauri -- build` 실행 시 앱 제품명과 설치 파일명에 적용된다. PC별 설정은 창과 트레이 이름에 적용되고 Finder와 Windows 설치 목록 이름은 다시 빌드해야 변경된다. 파일명으로 쓸 수 있는 1~40자로 지정한다. 기존 설정에 이 항목이 없으면 기존 `name`을 배포 앱 이름으로 사용한다.
+- `name`은 로그인·대화창·답변 새창 본문에 표시되는 챗봇 이름이다. `appTitle`과 별도로 설정한다.
 - `badge`는 이름 옆의 짧은 문구다. 기본값은 `CHAT`이며 `""`을 지정하면 숨긴다.
 - `theme`은 `gold`(기본 노랑), `blue`(파랑), `green`(초록), `mono`(흰 화면에 검정 버튼과 회색 배지) 중에서 고른다. 버튼, 배지, 입력 포커스에 적용된다.
 - 프로젝트 루트 설정을 변경하면 다시 빌드해야 한다. PC별 설정을 변경하면 앱을 트레이 메뉴에서 **종료**하고 다시 열면 된다. PC별 설정이 없거나 잘못된 항목은 배포 기본값을 사용한다. 빌드 시 지정한 `VITE_CHATBOT_NAME`, `VITE_CHATBOT_BADGE`가 있으면 이름·배지의 기본값으로 사용한다.
@@ -61,6 +63,124 @@ npm run tauri -- icon ../../assets/pet/app-icon.png --output src-tauri/target/ge
 ```
 
 생성한 아이콘을 패키징 설정의 `bundle.icon`에 지정하고 [macOS·Windows 패키징 안내](apps/desktop/README.md)에 따라 다시 빌드한다.
+
+## 앱 빌드와 사용자에게 전달하기
+
+아래 명령은 저장소를 내려받은 **프로젝트 루트**에서 시작한다. 프로젝트 폴더 이름과 절대 경로는 각자의 환경을 사용한다. 파일명의 `<앱 이름>`은 루트 `branding.json`의 `appTitle`, `<버전>`은 `apps/desktop/src-tauri/tauri.conf.json`의 `version`이다. 이름을 바꿔도 예전 산출물은 남으므로 마지막 빌드 로그의 경로를 확인한다.
+
+| 받는 사용자 | 전달할 파일 | 사용 방법 |
+| --- | --- | --- |
+| macOS | 해당 Mac CPU에 맞게 빌드한 `<앱 이름>.app`을 압축한 ZIP | 압축을 풀고 앱을 Applications 폴더로 옮긴 뒤 실행한다 |
+| Windows x64 | `<앱 이름>_<버전>_x64-setup.exe` | 설치 파일을 실행하고 설치된 앱에서 로그인한다 |
+
+사용자에게는 앱만 전달하면 된다. Spring 서버는 별도로 실행되어 있어야 하며, 사용자 PC에서 서버 주소에 접속할 수 있어야 한다. 서버의 `.secret/`, 원본 문서, 검색 색인, 소스 코드는 앱과 함께 전달하지 않는다.
+
+### 공통 준비
+
+빌드하는 컴퓨터에 Node.js 22.12 이상, npm, Rust stable과 OS별 개발 도구가 필요하다. macOS는 Xcode 개발 도구, Windows는 Visual Studio C++ Build Tools와 WebView2가 필요하다. 상세 설치 방법은 [Tauri 공식 사전 준비](https://v2.tauri.app/start/prerequisites/)를 따른다.
+
+```sh
+cd apps/desktop
+npm ci
+npm test
+npm run tauri -- icon ../../assets/pet/app-icon.png --output src-tauri/target/generated-icons
+```
+
+이후 명령의 작업 폴더는 `apps/desktop`이다.
+
+- `npm run dev`는 브라우저 개발 화면을 실행한다.
+- `npm run tauri -- dev`는 개발용 데스크톱 앱을 실행한다.
+- `npm run build`는 프런트엔드 리소스를 만든다.
+- `npm run tauri -- build`는 프런트엔드와 네이티브 앱을 빌드한다.
+
+### 배포 서버 주소와 패키징 설정
+
+서버 주소는 **받는 사용자 PC에서 접근 가능한 주소**를 사용한다. `127.0.0.1`은 받는 사람 자신의 컴퓨터를 가리킨다. 아래 `https://chat-api.example.com`을 실제 서버 주소로 바꾼다. 포트를 쓰면 포트까지 적는다.
+
+아이콘 생성 후 `apps/desktop/src-tauri/target/bundle.json`을 아래 내용으로 만든다. `target/`은 Git 제외 폴더이므로 새로 내려받은 환경에서는 이 파일도 다시 만든다. 기존 컴퓨터에서 생성된 `windows-bundle.json`이나 `macos-lan-bundle.json`이 있다고 가정하지 않는다.
+
+```json
+{
+  "bundle": {
+    "active": true,
+    "icon": [
+      "../../../assets/pet/app-icon.png",
+      "target/generated-icons/icon.ico",
+      "target/generated-icons/icon.icns"
+    ]
+  },
+  "app": {
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost; connect-src ipc: http://ipc.localhost https://chat-api.example.com; object-src 'none'; base-uri 'none'; form-action 'none'"
+    }
+  }
+}
+```
+
+`connect-src`의 서버 주소와 다음 빌드 명령의 `VITE_API_BASE_URL`은 같아야 한다. `npm run tauri`는 루트 `branding.json`의 `appTitle`을 제품명에 자동 적용한다. 환경마다 서버 주소와 이름을 먼저 확인한다.
+
+### macOS에서 macOS 앱 빌드
+
+터미널에서 실행한다. 아래 주소를 실제 서버 주소로 바꾼다.
+
+```sh
+VITE_API_BASE_URL=https://chat-api.example.com npm run tauri -- build --bundles app --config src-tauri/target/bundle.json
+```
+
+프로젝트 루트 기준 결과 폴더는 `apps/desktop/src-tauri/target/release/bundle/macos/`다. 여기에 생성된 `<앱 이름>.app`을 전달한다. .app 내부의 실행 파일만 따로 보내면 안 된다.
+
+개발 환경에서 임시 서명이 필요하면 다음과 같이 처리하고 ZIP으로 묶는다. 명령의 앱 이름은 루트 설정에서 읽는다.
+
+```sh
+APP_TITLE=$(node -p 'const b=require("../../branding.json"); b.appTitle ?? b.name')
+APP_PATH="src-tauri/target/release/bundle/macos/$APP_TITLE.app"
+codesign --force --sign - "$APP_PATH"
+codesign --verify --strict "$APP_PATH"
+ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "src-tauri/target/release/bundle/macos/$APP_TITLE.zip"
+```
+
+**같은 폴더의 ZIP을 Mac 사용자에게 전달**한다. 임시 서명은 Apple Developer ID 서명과 공증을 대체하지 않으며, 다른 Mac에서 보안 확인이 필요할 수 있다.
+
+기본 빌드는 빌드한 Mac의 CPU 아키텍처를 따른다. Apple Silicon에서 만든 앱과 Intel Mac용 앱을 구분해 전달한다. 양쪽 모두에 배포하려면 Intel용 별도 빌드나 Universal 빌드를 준비한다.
+
+### Windows에서 Windows x64 설치 파일 빌드
+
+PowerShell에서 실행한다. Rust의 Windows x64 MSVC 타깃이 필요하다.
+
+```powershell
+rustup target add x86_64-pc-windows-msvc
+$env:VITE_API_BASE_URL = "https://chat-api.example.com"
+npm run tauri -- build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/target/bundle.json
+```
+
+프로젝트 루트 기준 결과 폴더는 `apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`다. **그 안의 `*-setup.exe`를 Windows 사용자에게 전달**한다. `release/my-chat-bot.exe`는 앱 실행 파일이며, 배포에는 NSIS 폴더의 설치 파일을 사용한다.
+
+### Mac에서 Windows x64 설치 파일 빌드
+
+Mac에서도 NSIS 설치 파일을 교차 빌드할 수 있다. Homebrew가 설치된 환경에서 최초 한 번 빌드 도구를 준비한다. MSVC 런타임·SDK 다운로드가 필요하다.
+
+```sh
+brew install llvm lld nsis
+cargo install --locked cargo-xwin
+rustup target add x86_64-pc-windows-msvc
+```
+
+공통 준비와 `target/bundle.json` 작성을 마친 뒤 `apps/desktop`에서 실행한다.
+
+```sh
+export PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH"
+VITE_API_BASE_URL=https://chat-api.example.com npm run tauri -- build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/target/bundle.json
+```
+
+결과는 위 Windows 빌드와 같은 `apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`의 `*-setup.exe`다. 교차 빌드는 실험적 지원이므로 전달 전 실제 Windows에서 설치·로그인을 확인한다. [Tauri Windows 설치 파일 안내](https://v2.tauri.app/distribute/windows-installer/)
+
+### 개발 빌드와 기존 설치 교체
+
+`--debug`를 넣으면 `release/` 대신 `debug/`에 결과가 생성된다. 예를 들어 Mac 디버그 앱은 `apps/desktop/src-tauri/target/debug/bundle/macos/<앱 이름>.app`에 있다.
+
+현재 서명 인증서가 없는 환경에서 만든 Windows 설치 파일은 미서명이다. WebView2가 없으면 설치 중 런타임 다운로드가 필요할 수 있다. 정식 배포 서명과 공증은 조직의 인증서·배포 정책에 맞춰 준비한다.
+
+이전 앱을 트레이에서 종료한 뒤 새 앱을 연다. Windows에서 제품명까지 변경했다면 기존 앱을 제거한 뒤 새 설치 파일을 사용한다. 창 위치와 크기를 보존하려면 제거 시 앱 데이터 삭제를 선택하지 않는다. Mac의 Dock에 이전 앱이 고정돼 있으면 새 앱으로 교체한다.
 
 ## 구조
 ```text

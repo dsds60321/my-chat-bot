@@ -1,5 +1,6 @@
 {
-  "name": "MyChatBot",
-  "badge": "CHAT",
+  "appTitle": "EasyToUse ChatBot",
+  "name": "사내 챗봇",
+  "badge": "E2U",
   "theme": "gold"
 }
