@@ -1,13 +1,14 @@
 import { AuthenticationError, type LoginSession } from './session';
 import { documentTargets, knowledgeRequest, proposalIntent, type DocumentTarget, type Proposal, type ProposalDraft } from './knowledge';
-import { sourceName } from './sources';
+import { appendAttachments, safeAttachments, sourceName } from './sources';
+import { downloadSource, previewSource } from './download';
 import { scrollingIndicator } from './scroll';
 
 const proposalPath = '/api/knowledge/proposals';
 const reviewPath = '/api/knowledge/admin/proposals';
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 type View = 'proposal' | 'history' | 'review';
-const titles: Record<View, string> = { proposal: '문서 수정 제안', history: '내 제안', review: '제안 검토' };
+const titles: Record<View, string> = { proposal: '학습 자료 관리', history: '내 제안', review: '제안 검토' };
 const states: Record<Proposal['state'], string> = { PENDING_APPROVAL: '승인 대기', APPROVED: '승인됨', REJECTED: '반려됨', WITHDRAWN: '철회됨' };
 
 export function setupKnowledgePanel(session: LoginSession, changed: () => void, announce: (message: string) => void, expire: (message: string) => void) {
@@ -26,6 +27,10 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
   const consent = element<HTMLInputElement>('proposal-consent');
   const submit = element<HTMLButtonElement>('proposal-submit');
   const history = element('knowledge-history');
+  const projectCreate = element<HTMLDetailsElement>('project-create');
+  const projectId = element<HTMLInputElement>('project-create-id');
+  const files = element<HTMLInputElement>('proposal-files');
+  const descriptions = element('proposal-file-descriptions');
   let view: View | null = null;
   let operation: AbortController | null = null;
   let target: DocumentTarget | null = null;
@@ -36,6 +41,7 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
   function updateSubmit(): void { submit.disabled = !draft || !consent.checked || !after.value.trim() || !draftTitle.value.trim(); }
   function clearDraft(): void {
     draft = null; before.textContent = ''; draftTitle.value = ''; after.value = ''; consent.checked = false;
+    files.value = ''; descriptions.replaceChildren();
     element('proposal-draft').hidden = true; updateSubmit();
   }
   function clearTargets(): void {
@@ -57,7 +63,7 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
     changed();
   }
   function reset(): void {
-    setView(null); form.reset(); clearTargets(); project.replaceChildren();
+    setView(null); projectCreate.hidden = true; projectCreate.open = false; form.reset(); clearTargets(); project.replaceChildren();
   }
   async function run(message: string, work: (signal: AbortSignal) => Promise<void>, mutating = false): Promise<void> {
     if (operation || !view) return;
@@ -100,17 +106,63 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
       announce(items.length ? `문서 ${items.length}개를 찾았어요. 수정할 문서를 선택해 주세요.` : '일치하는 문서가 없어요. 다른 검색어를 입력해 주세요.');
     });
   }
+  async function loadProjects(signal: AbortSignal, selected = project.value): Promise<void> {
+    const current = await knowledgeRequest<{ projects?: unknown; canCreateProject?: boolean }>(session, '/api/session', signal);
+    const names = current.projects;
+    if (!Array.isArray(names) || !names.every(name => typeof name === 'string')) {
+      throw new Error('프로젝트 목록을 읽지 못했어요.');
+    }
+    project.replaceChildren(...[...names].sort().map(name => new Option(name, name)));
+    projectCreate.hidden = current.canCreateProject !== true;
+    if (names.includes(selected)) project.value = selected;
+    announce(names.length ? '' : '이 계정으로 작성할 수 있는 프로젝트가 없어요.');
+  }
+  function refreshProjects(): void {
+    void run('프로젝트 목록을 불러오고 있어요.', signal => loadProjects(signal));
+  }
+  element('project-create-submit').addEventListener('click', () => {
+    const id = projectId.value.trim();
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)) {
+      report('프로젝트 ID는 영문 소문자 또는 숫자로 시작하고 -와 _를 사용할 수 있어요.');
+      projectId.focus();
+      return;
+    }
+    void run('프로젝트를 만들고 있어요.', async signal => {
+      await knowledgeRequest(session, '/api/knowledge/admin/projects', signal, { id });
+      clearDraft();
+      projectCreate.open = false;
+      projectId.value = '';
+      await loadProjects(signal, id);
+      announce(`'${id}' 프로젝트를 만들었어요.`);
+    }, true);
+  });
+  files.addEventListener('change', () => {
+    descriptions.replaceChildren();
+    report('');
+    const selected = Array.from(files.files ?? []);
+    if (selected.length > 3 || selected.some(file => file.size === 0 || file.size > 8 * 1024 * 1024)) {
+      files.value = '';
+      report('파일은 최대 3개, 파일당 8MB까지 올릴 수 있어요.');
+      return;
+    }
+    for (const file of selected) {
+      const label = document.createElement('label');
+      label.textContent = `${file.name} 설명`;
+      const input = document.createElement('input');
+      input.maxLength = 500;
+      input.setAttribute('aria-required', String(/\.(png|jpe?g)$/i.test(file.name)));
+      label.append(input); descriptions.append(label);
+    }
+  });
   function openProposal(intent?: NonNullable<ReturnType<typeof proposalIntent>>): void {
     if (!session.active || session.local) return;
     reset(); setView('proposal');
-    kind.value = intent?.kind === 'NEW' ? 'new' : 'update';
+    kind.value = intent?.kind === 'AMENDMENT' ? 'update' : 'new';
     instruction.value = intent?.instruction ?? '';
     query.value = intent?.query ?? '';
-    for (const name of session.user?.projects ?? []) {
-      const option = document.createElement('option'); option.value = name; option.textContent = name; project.append(option);
-    }
     showKind(); heading.focus();
-    if (query.value) searchTargets();
+    if (kind.value === 'new') refreshProjects();
+    else if (query.value) searchTargets();
   }
   function text(tag: 'p' | 'h3' | 'summary', value: string, className?: string): HTMLElement {
     const node = document.createElement(tag); node.textContent = value;
@@ -129,6 +181,15 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
       item.append(text('p', [record.project, record.sourceTitle, next === 'review' ? record.author : '', record.createdAt?.slice(0, 10)].filter(Boolean).join(' · '), 'status'));
       if (next === 'review' && record.sourceVersion) item.append(text('p', `원본 버전 ${record.sourceVersion.slice(0, 12)}`, 'status'));
       item.append(text('h3', '제안 내용'), text('p', record.content, 'proposal-text'));
+      appendAttachments(item, safeAttachments(record.attachments), (file, preview) => {
+        void run('첨부파일을 불러오고 있어요.', async signal => {
+          const endpoint = `${proposalPath}/${encodeURIComponent(record.id)}/attachments/${file.documentId}`;
+          if (preview) {
+            await previewSource(file, session, preview, endpoint, signal);
+            announce('');
+          } else announce(await downloadSource(file, session, endpoint));
+        });
+      });
       if (next === 'review' && record.state === 'PENDING_APPROVAL') {
         if (record.author === session.user?.username) item.append(text('p', '본인이 제출한 제안은 다른 관리자가 검토합니다.', 'status'));
         else {
@@ -168,7 +229,10 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
     if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); searchTargets(); }
   });
   query.addEventListener('input', clearTargets);
-  kind.addEventListener('change', showKind);
+  kind.addEventListener('change', () => {
+    showKind();
+    if (kind.value === 'new') refreshProjects();
+  });
   for (const input of [project, instruction]) input.addEventListener('input', clearDraft);
   for (const input of [after, draftTitle, consent]) input.addEventListener('input', updateSubmit);
   form.addEventListener('submit', event => {
@@ -206,7 +270,20 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
     if (!content || content.length > 4000 || !label || label.length > 120) { report('제목은 1~120자, 내용은 1~4000자로 입력해 주세요.'); return; }
     const { project, sourceDocumentId, sourceVersion } = draft;
     void run('제안을 제출하고 있어요.', async signal => {
-      const saved = await knowledgeRequest<Proposal>(session, proposalPath, signal, { project, sourceDocumentId, sourceVersion, title: label, content, consent: true });
+      const proposal = { project, sourceDocumentId, sourceVersion, title: label, content, consent: true };
+      const selected = Array.from(files.files ?? []);
+      let body: object = proposal;
+      if (selected.length) {
+        const inputs = Array.from(descriptions.querySelectorAll('input'));
+        if (inputs.some(input => input.getAttribute('aria-required') === 'true' && !input.value.trim())) {
+          throw new Error('이미지마다 검색에 사용할 설명을 입력해 주세요.');
+        }
+        const multipart = new FormData();
+        multipart.append('metadata', JSON.stringify({ proposal, descriptions: inputs.map(input => input.value.trim()) }));
+        for (const file of selected) multipart.append('files', file);
+        body = multipart;
+      }
+      const saved = await knowledgeRequest<Proposal>(session, proposalPath, signal, body);
       openList('history'); announce(saved.state === 'APPROVED' ? '제안을 검색에 반영했어요.' : '승인 요청을 보냈어요. 내 제안에서 확인할 수 있어요.');
     }, true);
   });

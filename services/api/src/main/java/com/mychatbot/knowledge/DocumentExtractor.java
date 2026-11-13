@@ -35,6 +35,10 @@ final class DocumentExtractor {
 
     Extracted extract(Path path) throws Exception {
         String name = path.getFileName().toString();
+        return extract(path, name);
+    }
+
+    Extracted extract(Path path, String name) throws Exception {
         String type = extension(name);
         if (Files.size(path) > MAX_BYTES) throw new IllegalArgumentException("file-size-limit");
         if (type.equals("xlsx") || type.equals("docx")) checkZip(path);

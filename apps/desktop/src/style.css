@@ -152,3 +152,8 @@ textarea { font-size: 14px; }
 @keyframes pet-walk { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-2px) rotate(2deg); } }
 @keyframes pet-think { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-2px) rotate(2deg) scale(1.02); } }
 @media (prefers-reduced-motion: reduce) { .pet[data-motion] img { animation: none; } .pet-pose { transition: none; } }
+
+.source-attachment { display: grid; justify-items: start; gap: 4px; padding: 6px 0; overflow-wrap: anywhere; }
+.source-attachment img { max-width: min(180px, 100%); border: 1px solid var(--border); border-radius: 6px; cursor: zoom-in; }
+.source-attachment img:not([src]) { display: none; }
+.source-attachment img.expanded { max-width: 100%; cursor: zoom-out; }

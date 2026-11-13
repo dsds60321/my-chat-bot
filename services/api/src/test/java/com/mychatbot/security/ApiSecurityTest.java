@@ -19,10 +19,10 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.mockUser;
 
-@WebFluxTest(controllers = {ChatController.class, SearchController.class, SessionController.class}, properties = {
+@WebFluxTest(controllers = {ChatController.class, SearchController.class, SessionController.class}, properties = {"knowledge.root=build/test-fixtures/no-corpus",
         "spring.main.web-application-type=reactive", "spring.jackson.deserialization.fail-on-unknown-properties=true", "pet.api.password=temporary-test-password", "pet.api.projects=paye2u", "pet.api.requests-per-minute=100",
         "pet.api.admin.user=reviewer", "pet.api.admin.password=temporary-review-password", "pet.api.admin.projects=syslink"})
-@Import({ApiSecurity.class, ApiErrors.class, RequestLimiter.class})
+@Import({ApiSecurity.class, com.mychatbot.knowledge.ProjectCatalog.class, ApiErrors.class, RequestLimiter.class})
 class ApiSecurityTest {
     @Autowired WebTestClient client;
     @MockitoBean ChatService chat;
@@ -35,7 +35,7 @@ class ApiSecurityTest {
         when(search.search(anyString(), anySet(), anyInt())).thenReturn(List.of());
     }
     @Test void directPublishRequiresAnExactConfiguredAccount() {
-        var accounts = new ApiSecurity().users("developer", "employee-test", "common",
+        var accounts = new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus")).users("developer", "employee-test", "common",
                 "reviewer", "admin-test", "common", "developer, *");
         StepVerifier.create(accounts.findByUsername("developer"))
                 .assertNext(user -> assertThat(user.getAuthorities()).extracting(a -> a.getAuthority())
@@ -67,14 +67,14 @@ class ApiSecurityTest {
         client.get().uri("/api/session").headers(h -> h.setBasicAuth("reviewer", "temporary-review-password"))
                 .exchange().expectStatus().isOk().expectBody()
                 .json("{\"username\":\"reviewer\",\"projects\":[\"syslink\"],\"admin\":true}");
-        StepVerifier.create(new ApiSecurity().users("developer", "employee-test", "", "reviewer", "employee-test", "syslink", "")
+        StepVerifier.create(new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus")).users("developer", "employee-test", "", "reviewer", "employee-test", "syslink", "")
                 .findByUsername("reviewer")).verifyComplete();
-        StepVerifier.create(new ApiSecurity().users("developer", "employee-test", "", "reviewer", "admin-test", "", "")
+        StepVerifier.create(new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus")).users("developer", "employee-test", "", "reviewer", "admin-test", "", "")
                 .findByUsername("reviewer"))
                 .assertNext(user -> assertThat(user.getAuthorities()).extracting(a -> a.getAuthority()).containsExactlyInAnyOrder(
                         "ROLE_EMPLOYEE", "ROLE_KNOWLEDGE_ADMIN", "PROJECT_paye2u", "PROJECT_syslink", "PROJECT_operations", "PROJECT_notes", "PROJECT_common"))
                 .verifyComplete();
-        StepVerifier.create(new ApiSecurity().users("developer", "employee-test", "", "reviewer", "admin-test", "unknown,*", "")
+        StepVerifier.create(new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus")).users("developer", "employee-test", "", "reviewer", "admin-test", "unknown,*", "")
                 .findByUsername("reviewer")).verifyComplete();
     }
     @Test void sessionValidatesCredentialsAndReturnsOnlyServerIdentityAndGrants() {
@@ -112,14 +112,24 @@ class ApiSecurityTest {
                 .exchange().expectStatus().isOk().expectHeader().valueEquals("Access-Control-Allow-Origin", "http://127.0.0.1:1420");
     }
     @Test void absentPasswordDisablesAccountAndProjectsAreServerAuthorities() {
-        StepVerifier.create(new ApiSecurity().users("developer", "", "paye2u", "", "", "", "").findByUsername("developer")).verifyComplete();
-        StepVerifier.create(new ApiSecurity().users("developer", "temporary-test", "paye2u,../bad", "", "", "", "").findByUsername("developer"))
+        StepVerifier.create(new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus")).users("developer", "", "paye2u", "", "", "", "").findByUsername("developer")).verifyComplete();
+        StepVerifier.create(new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus")).users("developer", "temporary-test", "paye2u,../bad", "", "", "", "").findByUsername("developer"))
                 .assertNext(user -> assertThat(user.getAuthorities()).extracting(a -> a.getAuthority()).containsExactlyInAnyOrder("ROLE_EMPLOYEE", "PROJECT_paye2u"))
                 .verifyComplete();
     }
 
+    @Test void newlyCreatedProjectRespectsConfiguredAccess(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+        var security = new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog(root.toRealPath().toString()));
+        var all = security.users("all", "test-password", "", "", "", "", "");
+        var restricted = security.users("restricted", "test-password", "common", "", "", "", "");
+        assertThat(all.findByUsername("all").block().getAuthorities()).noneMatch(a -> a.getAuthority().equals("PROJECT_e2u"));
+        java.nio.file.Files.createDirectory(root.resolve("e2u"));
+        assertThat(all.findByUsername("all").block().getAuthorities()).anyMatch(a -> a.getAuthority().equals("PROJECT_e2u"));
+        assertThat(restricted.findByUsername("restricted").block().getAuthorities()).noneMatch(a -> a.getAuthority().equals("PROJECT_e2u"));
+    }
+
     @Test void blankProjectsDefaultToAllAndInvalidExplicitProjectsGrantNothing() {
-        ApiSecurity security = new ApiSecurity();
+        ApiSecurity security = new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus"));
         StepVerifier.create(security.users("developer", "temporary-test", " \t ", "", "", "", "").findByUsername("developer"))
                 .assertNext(user -> assertThat(user.getAuthorities()).extracting(a -> a.getAuthority()).containsExactlyInAnyOrder(
                         "ROLE_EMPLOYEE", "PROJECT_paye2u", "PROJECT_syslink", "PROJECT_operations", "PROJECT_notes", "PROJECT_common"))

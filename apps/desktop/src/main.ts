@@ -6,9 +6,9 @@ import thinkingPetUrl from '../../../assets/pet/pet-thinking.png';
 import { PetMotion } from './pet-motion';
 import { streamChat, type Source } from './chat';
 import { LoginSession, AuthenticationError } from './session';
-import { safeSources, renderSources as showSources } from './sources';
+import { safeSources, renderSources as showSources, type SourceFile } from './sources';
 import { openAnswer, closeAnswer, listenForSourceDownloads } from './popup';
-import { downloadSource } from './download';
+import { downloadSource, previewSource } from './download';
 import { scrollingIndicator, scrollToEnd } from './scroll';
 import { isDrag, mockAnswer, shouldSend, fitPreviewSize, fitToWorkArea, previewArea, resizeFromEdge, type Rect, type ResizeDirection } from './logic';
 import { initializeWindow, native, resizeWindow, showAfterFailure, startDragging, startResizing, watchPetDrag } from './native';
@@ -65,12 +65,12 @@ function busy(value: boolean): void {
 }
 function renderSources(items: unknown): void {
   sources = safeSources(items);
-  showSources(element<HTMLUListElement>('sources'), sources, file => {
-    const source = sources.find(s => s.documentId === file.documentId && s.version === file.version);
-    if (source) void saveSource(source);
+  showSources(element<HTMLUListElement>('sources'), sources, file => { void saveSource(file); }, (file, image) => {
+    if (request) { announce('답변이 끝난 뒤 이미지를 열어 주세요.'); return; }
+    void previewSource(file, session, image).catch(error => announce(error instanceof Error ? error.message : '이미지를 열지 못했어요.'));
   });
 }
-async function saveSource(source: Source): Promise<string> {
+async function saveSource(source: SourceFile): Promise<string> {
   if (request) {
     const message = '답변이 끝난 뒤 파일을 다운로드해 주세요.';
     announce(message);

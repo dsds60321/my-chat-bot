@@ -26,6 +26,21 @@ class KnowledgeServiceTest {
         return new KnowledgeService(canonical.resolve("source"), canonical.resolve("index"));
     }
 
+    @Test void newProjectFolderAppearsWhileRunningAndDocumentsKeepTheirScope() throws Exception {
+        Path root = temp.toRealPath().resolve("source");
+        var catalog = new ProjectCatalog(root.toString());
+        try (var knowledge = service()) {
+            assertThat(catalog.projects()).doesNotContain("e2u");
+            Files.createDirectory(root.resolve("e2u"));
+            Files.createSymbolicLink(root.resolve("linked"), root.resolve("e2u"));
+            assertThat(catalog.projects()).contains("e2u").doesNotContain("linked");
+            source("e2u/guide.md", "# Guide\nNEW_PROJECT_LOOKUP paye2u syslink");
+            assertThat(knowledge.search("NEW_PROJECT_LOOKUP", Set.of("e2u"), 4))
+                    .extracting(SearchHit::project).containsExactly("e2u");
+            assertThat(knowledge.search("NEW_PROJECT_LOOKUP", Set.of("paye2u", "syslink"), 4)).isEmpty();
+        }
+    }
+
     @Test void firstScanCreatesConfiguredSourceAndIndexesFilesAddedLater() throws Exception {
         Path canonical = temp.toRealPath();
         Path root = canonical.resolve("custom/knowledge");
@@ -57,7 +72,7 @@ class KnowledgeServiceTest {
                     .extracting(SearchHit::project).containsExactlyInAnyOrder("paye2u", "syslink");
             assertThat(knowledge.search("가맹점 식별자는 무엇인가요", Set.of("paye2u"), 5)).isNotEmpty();
             assertThat(knowledge.search("MCHT", Set.of(), 5)).isEmpty();
-            assertThat(knowledge.search("MCHT", Set.of("unknown"), 5)).isEmpty();
+            assertThat(knowledge.search("MCHT", Set.of("missing"), 5)).isEmpty();
             assertThat(knowledge.search("XYZZY_UNRELATED_Q99", Set.of("paye2u"), 5)).isEmpty();
             assertThat(knowledge.search("*:*", Set.of("paye2u"), 5)).isEmpty();
             assertThat(knowledge.search("알려 주세요", Set.of("paye2u"), 5)).isEmpty();

@@ -3,15 +3,15 @@ import { emitTo } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { native } from './native';
 import type { Source } from './chat';
-import { answerSnapshot, sourceFile, type AnswerSnapshot } from './sources';
+import { answerSnapshot, findSourceFile, sourceFile, type AnswerSnapshot, type SourceFile } from './sources';
 
 let preview: Window | null = null;
 let transfer: ((event: MessageEvent) => void) | null = null;
 let readerSources: Source[] = [];
-export function listenForSourceDownloads(download: (source: Source) => Promise<string>): void {
+export function listenForSourceDownloads(download: (source: SourceFile) => Promise<string>): void {
   const handle = async (value: unknown): Promise<string> => {
     const file = sourceFile(value);
-    const source = file && readerSources.find(s => s.documentId === file.documentId && s.version === file.version);
+    const source = file && findSourceFile(readerSources, file);
     if (!source) return '읽기 창의 출처를 찾지 못했어요. 대화창에서 다시 열어 주세요.';
     return download(source);
   };

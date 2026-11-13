@@ -1,6 +1,6 @@
 import { authorization, AuthenticationError, type LoginSession } from './session.ts';
 import { apiBaseUrl } from './api.ts';
-import { sourceFile } from './sources.ts';
+import { sourceFile, type Attachment } from './sources.ts';
 
 export type ProposalKind = 'NEW' | 'AMENDMENT';
 export type ProposalState = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN';
@@ -10,7 +10,7 @@ export interface ProposalDraft extends ProposalScope {
   kind: ProposalKind; title: string; content: string; sourceTitle?: string; before?: string;
 }
 export interface Proposal extends ProposalDraft {
-  id: string; author: string; state: ProposalState; createdAt: string; updatedAt: string;
+  id: string; author: string; state: ProposalState; createdAt: string; updatedAt: string; attachments?: Attachment[];
 }
 
 export function proposalIntent(question: string): { kind: ProposalKind; instruction: string; query: string } | null {
@@ -46,9 +46,10 @@ export function documentTargets(data: unknown): DocumentTarget[] {
 export async function knowledgeRequest<T>(session: LoginSession, path: string, signal: AbortSignal, body?: object): Promise<T> {
   const account = session.auth();
   const headers: Record<string, string> = { Accept: 'application/json', Authorization: authorization(account.username, account.password) };
-  if (body) headers['Content-Type'] = 'application/json';
+  const multipart = body instanceof FormData;
+  if (body && !multipart) headers['Content-Type'] = 'application/json';
   const response = await fetch(`${apiBaseUrl}${path}`, {
-    method: body ? 'POST' : 'GET', body: body ? JSON.stringify(body) : undefined, headers, signal,
+    method: body ? 'POST' : 'GET', body: multipart ? body : body ? JSON.stringify(body) : undefined, headers, signal,
     credentials: 'omit', cache: 'no-store', redirect: 'error',
   });
   signal.throwIfAborted();
@@ -58,6 +59,7 @@ export async function knowledgeRequest<T>(session: LoginSession, path: string, s
       400: '입력한 내용과 프로젝트를 확인해 주세요. 비밀정보가 있으면 제거해 주세요.',
       403: '이 작업을 할 권한이 없어요.',
       404: '대상 문서나 제안을 찾을 수 없어요. 목록을 다시 불러와 주세요.',
+      413: '파일당 8MB까지 올릴 수 있어요.',
       409: '문서가 변경되었거나 제안이 이미 처리됐어요. 다시 불러와 주세요.',
       429: '요청이 많아요. 잠시 후 다시 시도해 주세요.',
     };

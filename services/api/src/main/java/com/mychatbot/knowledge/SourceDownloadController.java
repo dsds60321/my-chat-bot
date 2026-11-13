@@ -32,17 +32,19 @@ public class SourceDownloadController {
             @RequestParam(required = false) String version, Authentication authentication) {
         AccessContext access = AccessContext.from(authentication);
         return Mono.using(() -> limiter.acquire(access.userId()),
-                lease -> Mono.fromCallable(() -> knowledge.download(documentId, version, access.projects())
-                        .map(file -> ResponseEntity.ok()
-                                .cacheControl(CacheControl.noStore())
-                                .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                                .contentLength(file.bytes().length)
-                                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
-                                        .filename(file.filename(), StandardCharsets.UTF_8).build().toString())
-                                .body(file.bytes()))
-                        .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
-                                .cacheControl(CacheControl.noStore()).build()))
+                lease -> Mono.fromCallable(() -> fileResponse(knowledge.download(documentId, version, access.projects())))
                         .subscribeOn(Schedulers.boundedElastic()),
                 RequestLimiter.Lease::close);
+    }
+
+    static ResponseEntity<byte[]> fileResponse(java.util.Optional<KnowledgeService.SourceFile> fileResult) {
+        return fileResult.map(file -> ResponseEntity.ok()
+                        .cacheControl(CacheControl.noStore())
+                        .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                        .contentLength(file.bytes().length)
+                        .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                                .filename(file.filename(), StandardCharsets.UTF_8).build().toString())
+                        .body(file.bytes()))
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND).cacheControl(CacheControl.noStore()).build());
     }
 }

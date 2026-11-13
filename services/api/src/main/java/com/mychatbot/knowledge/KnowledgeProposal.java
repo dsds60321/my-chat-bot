@@ -1,14 +1,22 @@
 package com.mychatbot.knowledge;
 
+import java.util.List;
+
 public record KnowledgeProposal(String id, Kind kind, String project, String sourceDocumentId, String sourceVersion,
                                 String sourceTitle, String title, String content, String author, State state,
-                                String createdAt, String updatedAt) {
+                                String createdAt, String updatedAt, List<Attachment> attachments) {
+    public KnowledgeProposal {
+        attachments = attachments == null ? List.of() : List.copyOf(attachments);
+    }
+
+    public record Attachment(String documentId, String version, String filename, String description, boolean image) {}
+
     public enum Kind { NEW, AMENDMENT }
     public enum State { PENDING_APPROVAL, APPROVED, REJECTED, WITHDRAWN }
 
     KnowledgeProposal withState(State next, String time) {
         return new KnowledgeProposal(id, kind, project, sourceDocumentId, sourceVersion, sourceTitle, title,
-                content, author, next, createdAt, time);
+                content, author, next, createdAt, time, attachments);
     }
 
     @Override public String toString() { return "KnowledgeProposal[" + id + ", " + state + "]"; }

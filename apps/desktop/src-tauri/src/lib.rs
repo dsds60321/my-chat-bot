@@ -158,7 +158,7 @@ fn save_source(app: tauri::AppHandle, window: tauri::WebviewWindow, request: tau
 
 fn is_openable_source(path: &Path) -> bool {
     matches!(path.extension().and_then(|ext| ext.to_str()).map(str::to_ascii_lowercase).as_deref(),
-        Some("md" | "txt" | "text" | "java" | "xml" | "json" | "sql" | "xlsx" | "xls" | "docx" | "pdf"))
+        Some("md" | "txt" | "text" | "java" | "xml" | "json" | "sql" | "xlsx" | "xls" | "docx" | "pdf" | "png" | "jpg" | "jpeg"))
 }
 
 #[cfg(any(target_os = "windows", test))]

@@ -9,7 +9,7 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 ./gradlew bootRun
 ```
 
-로컬 API 비밀번호는 Groq 키와 별개다. API 사용자·비밀번호·허용 프로젝트·요청 한도는 Git에서 제외하는 `services/api/.secret/application.yml`의 `pet.api`에서 관리한다. 환경변수로 재정의할 수도 있다. 단일 개발용 계정이며 조직 SSO가 아니다. `password`가 없으면 계정이 비활성이다. `projects`가 비어 있거나 생략되면 로그인한 계정으로 모든 지원 프로젝트의 검색 가능한 문서를 조회할 수 있다. HTTP는 localhost 개발에만 사용한다. 네트워크에 공개하기 전에 조직 인증과 HTTPS를 구성해야 한다.
+로컬 API 비밀번호는 Groq 키와 별개다. API 사용자·비밀번호·허용 프로젝트·요청 한도는 Git에서 제외하는 `services/api/.secret/application.yml`의 `pet.api`에서 관리한다. 환경변수로 재정의할 수도 있다. 개인 계정은 `pet.api.accounts`로 지정한다. 설정 예시는 [루트 README](../../README.md#계정-등급과-학습-자료-등록)를 참고한다. `projects`가 비어 있거나 생략되면 로그인한 계정으로 모든 지원 프로젝트의 검색 가능한 문서를 조회할 수 있다. HTTP는 localhost 개발에만 사용한다. 네트워크에 공개하기 전에 조직 인증과 HTTPS를 구성해야 한다.
 
 - API 주소: http://127.0.0.1:9001
 - POST /api/chat/stream: `{question, mode: work|general}` → sources/delta/done 또는 error SSE
@@ -19,7 +19,7 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 - 문서 폴더는 `knowledge.root`, 색인 위치는 `knowledge.index-path`로 지정한다. 서버 초기화 시 두 폴더가 없으면 생성한다. 실행 중 자료 폴더에 접근할 수 없으면 문서 검색을 중단한다. `knowledge.poll-ms`의 기본값은 5000이다. 서버가 실행 중에도 이 간격으로 폴더를 확인한다.
 - 외부 AI 키/원문/인증 헤더를 로그에 남기지 않음
 
-문서 제안을 검토하려면 서버 환경에 `PET_API_ADMIN_USER`, `PET_API_ADMIN_PASSWORD`를 설정한다. YAML에서는 `pet.api.admin.user`, `pet.api.admin.password`에 해당한다. 일반 계정과 다른 사용자 이름과 비밀번호를 사용한다. `PET_API_ADMIN_PROJECTS` 또는 `pet.api.admin.projects`를 비우거나 생략하면 전체 지원 프로젝트를 검토할 수 있다. 범위를 제한하려면 `paye2u,syslink`처럼 쉼표로 나열한다. 관리자는 같은 미니펫 로그인 화면에서 별도 계정으로 접속한다.
+문서 제안 검토, 직접 반영, 프로젝트 생성은 `accounts`에서 `grade: admin`으로 지정한 개인 계정이 담당한다. `accounts`를 설정하지 않은 서버는 기존 `pet.api.admin.*` 및 `pet.api.knowledge.direct-publish-users` 설정으로 로그인과 승인을 처리한다. 제안 및 업로드 첨부파일을 보존하려면 `knowledge.index-path`의 `proposals.json`과 `attachments/`를 함께 백업한다.
 
 ```sh
 ./gradlew test bootJar

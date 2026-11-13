@@ -25,3 +25,10 @@ test('partial reader snapshots retain only validated download IDs and versions',
   const snapshot = answerSnapshot({ answer:'부분', partial:true, sources:[file, {...file, version:'../secret'}] });
   assert.deepEqual(snapshot, { answer:'부분', partial:true, sources:[file, { title:file.title, path:file.path }] });
 });
+
+test('answer snapshots keep valid attachments with only their public metadata', () => {
+  const file = { documentId: 'a'.repeat(64), version: 'b'.repeat(64), filename: '취소.png', description: '입금취소 화면', image: true };
+  const snapshot = answerSnapshot({ answer: '본문', sources: [{ title: '가이드', path: 'guide.md',
+    attachments: [{ ...file, password: 'omit' }, { ...file, documentId: '../private' }] }] });
+  assert.deepEqual(snapshot.sources[0].attachments, [file]);
+});

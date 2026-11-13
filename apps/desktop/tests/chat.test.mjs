@@ -1,3 +1,4 @@
+import { apiBaseUrl } from '../src/api.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SseParser, streamChat } from '../src/chat.ts';
@@ -16,7 +17,7 @@ test('chat reads split UTF-8 and stops at done without cookie credentials', asyn
   const bytes = new TextEncoder().encode('event: delta\ndata: {"text":"안녕"}\n\nevent: done\ndata: {"provider":"mock"}\n\n');
   let i = 0;
   t.mock.method(globalThis, 'fetch', async (url, options) => {
-    assert.equal(url,'http://127.0.0.1:9001/api/chat/stream');
+    assert.equal(url,apiBaseUrl + '/api/chat/stream');
     assert.equal(options.credentials,'omit');
     assert.equal(options.redirect,'error');
     assert.deepEqual(JSON.parse(options.body),{question:'test'});

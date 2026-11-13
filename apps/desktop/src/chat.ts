@@ -1,7 +1,8 @@
 import { authorization, AuthenticationError } from './session.ts';
+import type { Attachment } from './sources.ts';
 import { apiBaseUrl } from './api.ts';
 
-export interface Source { documentId?: string; version?: string; title: string; path: string; section?: string; row?: number | null }
+export interface Source { documentId?: string; version?: string; title: string; path: string; section?: string; row?: number | null; attachments?: Attachment[] }
 export interface StreamEvent { event: string; data: Record<string, unknown> }
 
 // Parse lines independently of HTTP chunks; CRLF and UTF-8 may split anywhere.

@@ -8,6 +8,10 @@ spring:
     banner-mode: "off"
   codec:
     max-in-memory-size: 128KB
+  webflux:
+    multipart:
+      max-parts: 4
+      max-disk-usage-per-part: 8MB
   jackson:
     deserialization:
       fail-on-unknown-properties: true

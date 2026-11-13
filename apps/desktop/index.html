@@ -21,14 +21,14 @@
           <button id="login" class="primary-button" type="submit">접속</button>
         </form>
         <div id="chat-tools" class="chat-tools" hidden>
-          <button id="open-proposal" type="button">문서 수정 제안</button>
+          <button id="open-proposal" type="button">학습 자료 관리</button>
           <button id="open-history" type="button">내 제안</button>
           <button id="open-review" type="button" hidden>제안 검토</button>
           <button id="logout" type="button">로그아웃</button>
         </div>
         <section id="knowledge-panel" class="conversation knowledge-panel" tabindex="-1" aria-labelledby="knowledge-title" hidden>
           <header class="knowledge-header">
-            <h2 id="knowledge-title" tabindex="-1">문서 수정 제안</h2>
+            <h2 id="knowledge-title" tabindex="-1">학습 자료 관리</h2>
             <button id="close-knowledge" type="button">대화로 돌아가기</button>
           </header>
           <p id="knowledge-error" role="alert" hidden></p>
@@ -42,6 +42,11 @@
             </div>
             <div id="proposal-new" class="knowledge-form" hidden>
               <label for="proposal-project">프로젝트</label><select id="proposal-project"></select>
+              <details id="project-create" hidden><summary>새 프로젝트</summary>
+                <label for="project-create-id">프로젝트 ID</label>
+                <input id="project-create-id" maxlength="64" placeholder="예: operations-guide" />
+                <button id="project-create-submit" type="button">프로젝트 생성</button>
+              </details>
             </div>
             <label for="proposal-instruction">무엇을 바꾸거나 추가할까요?</label>
             <textarea id="proposal-instruction" rows="3" maxlength="4000" required></textarea>
@@ -51,6 +56,10 @@
               <label for="proposal-draft-title">제안 제목</label><input id="proposal-draft-title" maxlength="120" />
               <label for="proposal-after">변경 후 · 편집 가능</label>
               <textarea id="proposal-after" rows="7" maxlength="4000"></textarea>
+              <label for="proposal-files">첨부파일</label>
+              <input id="proposal-files" type="file" multiple accept=".md,.txt,.text,.java,.xml,.json,.sql,.xlsx,.xls,.docx,.pdf,.png,.jpg,.jpeg" aria-describedby="proposal-files-help" />
+              <small id="proposal-files-help">파일당 8MB · 최대 3개. 이미지는 검색에 사용할 설명을 입력해 주세요.</small>
+              <div id="proposal-file-descriptions" class="knowledge-form"></div>
               <label id="proposal-consent-label"><input id="proposal-consent" type="checkbox" /> 이 제안이 검색에 반영되면 이 프로젝트를 조회할 수 있는 사용자에게 공유하는 데 동의합니다.</label>
               <button id="proposal-submit" type="button" disabled>제안 제출</button>
             </section>

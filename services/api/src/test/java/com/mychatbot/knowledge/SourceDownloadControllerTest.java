@@ -18,9 +18,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-@WebFluxTest(controllers = SourceDownloadController.class, properties = {
+@WebFluxTest(controllers = SourceDownloadController.class, properties = {"knowledge.root=build/test-fixtures/no-corpus",
         "pet.api.password=temporary-test-password", "pet.api.projects=paye2u"})
-@Import({ApiSecurity.class, RequestLimiter.class})
+@Import({ApiSecurity.class, com.mychatbot.knowledge.ProjectCatalog.class, RequestLimiter.class})
 class SourceDownloadControllerTest {
     @Autowired WebTestClient client;
     @MockitoBean KnowledgeService knowledge;

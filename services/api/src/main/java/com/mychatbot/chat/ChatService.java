@@ -41,7 +41,7 @@ public class ChatService {
             StreamEvent sources = new StreamEvent("sources", Map.of("items", included));
             if (included.isEmpty()) {
                 return Flux.just(sources, new StreamEvent("delta", new StreamEvent.Delta(
-                        "현재 접근 가능한 업무 문서에서 관련 내용을 찾지 못했어요.\n\n관련 내용을 알고 계시다면 챗봇이 참고할 수 있도록 학습시켜 주세요. 상단의 ‘문서 수정 제안’ → ‘새 문서 작성’에서 내용을 작성하고 공유에 동의한 뒤 ‘제안 제출’을 눌러 주세요. 관리자 승인 후 검색에 반영되며, 직접 반영 권한이 있으면 바로 반영됩니다.")),
+                        "현재 접근 가능한 업무 문서에서 관련 내용을 찾지 못했어요.\n\n관련 내용을 알고 계시다면 챗봇이 참고할 수 있도록 학습시켜 주세요. 상단의 ‘학습 자료 관리’ → ‘새 문서 작성’에서 내용을 작성하고 공유에 동의한 뒤 ‘제안 제출’을 눌러 주세요. 관리자 승인 후 검색에 반영되며, 직접 반영 권한이 있으면 바로 반영됩니다.")),
                         new StreamEvent("done", new StreamEvent.Done(requestId, "documents")));
             }
             return Flux.concat(Flux.just(sources), router.route(new AiRequest(request.question(), context.toString()),

@@ -49,7 +49,7 @@ class ChatServiceTest {
         assertThat(calls).hasValue(0);
         assertThat(events).extracting(StreamEvent::event).containsExactly("sources", "delta", "done");
         assertThat(events.get(1).data()).isInstanceOfSatisfying(StreamEvent.Delta.class,
-                delta -> assertThat(delta.text()).contains("문서에서 관련 내용을 찾지 못", "학습시켜 주세요", "문서 수정 제안", "새 문서 작성", "제안 제출"));
+                delta -> assertThat(delta.text()).contains("문서에서 관련 내용을 찾지 못", "학습시켜 주세요", "학습 자료 관리", "새 문서 작성", "제안 제출"));
     }
 
     @Test void workSearchUsesTrustedProjectsAndSourcesDoNotContainText() throws Exception {

@@ -15,8 +15,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-@WebFluxTest(controllers = {SearchController.class, SessionController.class}, properties = "pet.api.password=temporary-test-password")
-@Import({ApiSecurity.class, RequestLimiter.class})
+@WebFluxTest(controllers = {SearchController.class, SessionController.class}, properties = {"pet.api.password=temporary-test-password", "knowledge.root=build/test-fixtures/no-corpus"})
+@Import({ApiSecurity.class, com.mychatbot.knowledge.ProjectCatalog.class, RequestLimiter.class})
 class DefaultProjectAccessTest {
     @Autowired WebTestClient client;
     @MockitoBean KnowledgeSearch search;

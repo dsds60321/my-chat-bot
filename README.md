@@ -14,11 +14,11 @@ Tauri 2 데스크톱앱 Java 21 / Spring Boot API로 구성된 챗봇이다. 업
 | 설치 파일과 앱의 OS 아이콘  | `assets/pet/app-icon.png` | 정사각형 PNG를 교체하고 `.ico` 또는 `.icns`를 다시 생성해 패키징한다 |
 | macOS 메뉴 막대 아이콘   | `assets/pet/tray-icon-macos.png` | 단색 투명 PNG를 교체하고 앱을 다시 빌드한다. macOS가 배경에 맞춰 색을 적용한다 |
 | Windows 알림 영역 아이콘 | `assets/pet/tray-icon.png` | 투명 PNG를 교체하고 앱을 다시 빌드한다 |
-| 앱이 접속할 API 주소     | `VITE_API_BASE_URL`, Tauri CSP `connect-src` | 두 곳에 같은 서버 주소를 지정하고 앱을 다시 빌드한다 |
+| 앱이 접속할 API 주소     | `apps/desktop/.env`의 `VITE_API_BASE_URL` | 서버 주소를 지정하고 앱을 다시 빌드한다 |
 
 ### 업무 자료와 챗봇 사용 안내 추가
 
-기본 자료 폴더는 `data/knowledge/`다. 서버가 시작할 때 지정된 자료 폴더와 색인 폴더가 없으면 자동으로 만든다. 새로 받은 저장소에서도 빈 자료 폴더를 미리 만들 필요가 없다. 예를 들어 `data/knowledge/user/엑셀-수집-절차.md`나 `data/knowledge/operations/점검.xlsx`처럼 프로젝트 하위에 파일을 넣는다. 지원 프로젝트는 `docs`, `user`, `operations`, `notes`, `common`이며, `common` 폴더가 없으면 만들 수 있다. 서버가 하위 폴더까지 확인하며, 파일 경로와 문서 내용에 따라 프로젝트 분류가 달라질 수 있다. 검색과 원본 다운로드는 로그인 계정에 허용된 프로젝트 범위에서 동작한다.
+기본 자료 폴더는 `data/knowledge/`다. 서버가 시작할 때 지정된 자료 폴더와 색인 폴더가 없으면 자동으로 만든다. 새로 받은 저장소에서도 빈 자료 폴더를 미리 만들 필요가 없다. 예를 들어 `data/knowledge/user/엑셀-수집-절차.md`나 `data/knowledge/operations/점검.xlsx`처럼 프로젝트 하위에 파일을 넣는다. 기본 프로젝트에 더해 자료 폴더 바로 아래에 만든 폴더를 프로젝트로 인식한다. 예를 들어 `data/knowledge/e2u/`를 만들고 **새 문서 작성** 화면을 다시 열면 권한이 있는 계정의 목록에 표시된다. 폴더 이름에는 영문 소문자, 숫자, 하이픈, 밑줄을 사용할 수 있다. 계정의 프로젝트 목록을 비워 두면 새 폴더도 조회 범위에 포함되며, 범위를 지정한 계정은 설정한 프로젝트만 조회한다. 서버가 하위 폴더까지 확인하며, 파일 경로와 문서 내용에 따라 프로젝트 분류가 달라질 수 있다. 검색과 원본 다운로드는 로그인 계정에 허용된 프로젝트 범위에서 동작한다.
 
 - 매뉴얼은 Markdown(`.md`)로 작성하고, 자주 묻는 질문을 제목으로 쓰면 관련 내용을 찾기 쉽다. Excel, DOCX, PDF, TXT도 읽을 수 있다.
 - 로컬의 `docs/chatbot-user-guide.md`를 조직에 맞게 수정한 뒤 `/새문서`에서 `common`을 선택해 제출한다. 현재 서버가 지원하는 실제 프로젝트 이름과 폴더는 이 README에서 확인할 수 있다. `docs/`는 프로젝트 문서 보관 위치다.
@@ -62,7 +62,7 @@ Windows 설치 파일과 macOS 앱에 쓰는 아이콘은 `assets/pet/app-icon.p
 npm run tauri -- icon ../../assets/pet/app-icon.png --output src-tauri/target/generated-icons
 ```
 
-생성한 아이콘을 패키징 설정의 `bundle.icon`에 지정하고 [macOS·Windows 패키징 안내](apps/desktop/README.md)에 따라 다시 빌드한다.
+macOS·Windows 앱을 빌드하면 이 변환이 자동으로 실행된다.
 
 ## 앱 빌드와 사용자에게 전달하기
 
@@ -83,7 +83,6 @@ npm run tauri -- icon ../../assets/pet/app-icon.png --output src-tauri/target/ge
 cd apps/desktop
 npm ci
 npm test
-npm run tauri -- icon ../../assets/pet/app-icon.png --output src-tauri/target/generated-icons
 ```
 
 이후 명령의 작업 폴더는 `apps/desktop`이다.
@@ -91,50 +90,31 @@ npm run tauri -- icon ../../assets/pet/app-icon.png --output src-tauri/target/ge
 - `npm run dev`는 브라우저 개발 화면을 실행한다.
 - `npm run tauri -- dev`는 개발용 데스크톱 앱을 실행한다.
 - `npm run build`는 프런트엔드 리소스를 만든다.
-- `npm run tauri -- build`는 프런트엔드와 네이티브 앱을 빌드한다.
+- `npm run tauri -- build`는 macOS에서 `.app`, Windows에서 NSIS 설치 파일까지 생성한다.
 
-### 배포 서버 주소와 패키징 설정
+### 배포 서버 주소
 
-서버 주소는 **받는 사용자 PC에서 접근 가능한 주소**를 사용한다. `127.0.0.1`은 받는 사람 자신의 컴퓨터를 가리킨다. 아래 `https://chat-api.example.com`을 실제 서버 주소로 바꾼다. 포트를 쓰면 포트까지 적는다.
+`apps/desktop/.env.example`을 같은 폴더의 `.env`로 복사하고, 받는 사용자 PC에서 접속할 수 있는 서버 주소를 적는다. 아래 주소를 실제 주소로 바꾼다.
 
-아이콘 생성 후 `apps/desktop/src-tauri/target/bundle.json`을 아래 내용으로 만든다. `target/`은 Git 제외 폴더이므로 새로 내려받은 환경에서는 이 파일도 다시 만든다. 기존 컴퓨터에서 생성된 `windows-bundle.json`이나 `macos-lan-bundle.json`이 있다고 가정하지 않는다.
-
-```json
-{
-  "bundle": {
-    "active": true,
-    "icon": [
-      "../../../assets/pet/app-icon.png",
-      "target/generated-icons/icon.ico",
-      "target/generated-icons/icon.icns"
-    ]
-  },
-  "app": {
-    "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost; connect-src ipc: http://ipc.localhost https://chat-api.example.com; object-src 'none'; base-uri 'none'; form-action 'none'"
-    }
-  }
-}
+```dotenv
+VITE_API_BASE_URL=https://chat-api.example.com
 ```
 
-`connect-src`의 서버 주소와 다음 빌드 명령의 `VITE_API_BASE_URL`은 같아야 한다. `npm run tauri`는 루트 `branding.json`의 `appTitle`을 제품명에 자동 적용한다. 환경마다 서버 주소와 이름을 먼저 확인한다.
+설정이 없으면 `http://127.0.0.1:9001`을 사용한다. `127.0.0.1`은 앱을 실행하는 PC 자신을 가리킨다. 빌드할 때 이 주소를 앱과 Tauri의 네트워크 허용 설정에 함께 적용한다. `.env`는 Git에서 제외되며, 주소를 바꾸면 앱을 다시 빌드한다. `VITE_` 값은 빌드 결과에 포함되므로 API 키나 비밀번호는 서버 설정에 둔다.
 
 ### macOS에서 macOS 앱 빌드
 
-터미널에서 실행한다. 아래 주소를 실제 서버 주소로 바꾼다.
-
 ```sh
-VITE_API_BASE_URL=https://chat-api.example.com npm run tauri -- build --bundles app --config src-tauri/target/bundle.json
+npm run tauri -- build
 ```
 
 프로젝트 루트 기준 결과 폴더는 `apps/desktop/src-tauri/target/release/bundle/macos/`다. 여기에 생성된 `<앱 이름>.app`을 전달한다. .app 내부의 실행 파일만 따로 보내면 안 된다.
 
-개발 환경에서 임시 서명이 필요하면 다음과 같이 처리하고 ZIP으로 묶는다. 명령의 앱 이름은 루트 설정에서 읽는다.
+기본 빌드는 macOS 앱에 임시 서명한다. 배포할 때는 서명을 확인하고 ZIP으로 묶는다. 명령의 앱 이름은 루트 설정에서 읽는다.
 
 ```sh
 APP_TITLE=$(node -p 'const b=require("../../branding.json"); b.appTitle ?? b.name')
 APP_PATH="src-tauri/target/release/bundle/macos/$APP_TITLE.app"
-codesign --force --sign - "$APP_PATH"
 codesign --verify --strict "$APP_PATH"
 ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "src-tauri/target/release/bundle/macos/$APP_TITLE.zip"
 ```
@@ -149,11 +129,10 @@ PowerShell에서 실행한다. Rust의 Windows x64 MSVC 타깃이 필요하다.
 
 ```powershell
 rustup target add x86_64-pc-windows-msvc
-$env:VITE_API_BASE_URL = "https://chat-api.example.com"
-npm run tauri -- build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/target/bundle.json
+npm run tauri -- build --target x86_64-pc-windows-msvc
 ```
 
-프로젝트 루트 기준 결과 폴더는 `apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`다. **그 안의 `*-setup.exe`를 Windows 사용자에게 전달**한다. `release/my-chat-bot.exe`는 앱 실행 파일이며, 배포에는 NSIS 폴더의 설치 파일을 사용한다.
+프로젝트 루트 기준 결과 폴더는 `apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`다. Windows x64에서 `--target` 없이 빌드하면 `apps/desktop/src-tauri/target/release/bundle/nsis/`에 생성된다. **그 안의 `*-setup.exe`를 Windows 사용자에게 전달**한다. `release/my-chat-bot.exe`는 앱 실행 파일이며, 배포에는 NSIS 폴더의 설치 파일을 사용한다.
 
 ### Mac에서 Windows x64 설치 파일 빌드
 
@@ -165,11 +144,11 @@ cargo install --locked cargo-xwin
 rustup target add x86_64-pc-windows-msvc
 ```
 
-공통 준비와 `target/bundle.json` 작성을 마친 뒤 `apps/desktop`에서 실행한다.
+공통 준비와 `.env` 설정을 마친 뒤 `apps/desktop`에서 실행한다.
 
 ```sh
 export PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH"
-VITE_API_BASE_URL=https://chat-api.example.com npm run tauri -- build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/target/bundle.json
+npm run tauri -- build --runner cargo-xwin --target x86_64-pc-windows-msvc
 ```
 
 결과는 위 Windows 빌드와 같은 `apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`의 `*-setup.exe`다. 교차 빌드는 실험적 지원이므로 전달 전 실제 Windows에서 설치·로그인을 확인한다. [Tauri Windows 설치 파일 안내](https://v2.tauri.app/distribute/windows-installer/)
@@ -264,18 +243,32 @@ npm run tauri -- dev
 
 대화창에서 문서 수정이나 새 문서 작성을 요청하거나 `/수정`, `/새문서`를 입력한다. 기존 문서를 선택하거나 새 문서의 프로젝트를 선택하고 초안을 검토한다. 동의 후 제출한 제안은 `내 제안`에서 확인한다. 별도 관리자 계정으로 로그인해 승인하면 검색에 반영된다. 기존 문서 수정은 원본에 연결된 정정 문서로 기록한다. 관리자 계정 설정은 [서버 안내](services/api/README.md)를 참고한다.
 
-### 문서 제안 직접 반영 권한
+### 계정 등급과 학습 자료 등록
 
-서버 `.secret/application.yml`의 기존 `pet.api` 아래에 `knowledge.direct-publish-users`를 지정한다. 기본값은 빈 문자열이며, 아래는 `developer` 계정에 권한을 주는 예시다.
+서버 `.secret/application.yml`의 `pet.api.accounts`에 개인 계정을 등록한다. 비밀번호 예시의 환경 변수는 서버 실행 설정에서 지정한다. 설정 변경 후 서버를 재시작한다.
 
 ```yaml
 pet:
   api:
-    knowledge:
-      direct-publish-users: "developer"
+    accounts:
+      - username: userA
+        password: "${CHAT_USER_A_PASSWORD}"
+        grade: admin
+        projects: []
+      - username: userB
+        password: "${CHAT_USER_B_PASSWORD}"
+        grade: member
+        projects: [operations]
 ```
 
-계정명을 쉼표로 구분하고 서버를 재시작한다. 등록한 계정은 본인이 새로 제출한 문서·정정을 공유 동의 후 관리자 검토 없이 검색에 반영할 수 있다. 프로젝트 권한, 민감정보 검사, 원본 버전 확인은 계속 적용된다. 같은 계정을 여러 사람이 사용하면 모두 이 권한을 갖는다. 기존 승인 대기 제안은 기존 절차로 처리한다.
+- `admin`은 허용 범위에서 새 프로젝트를 만들고 본인이 제출한 자료를 바로 반영하며 다른 사용자의 제안을 검토한다.
+- `member`는 허용된 기존 프로젝트에 자료를 등록하고 승인을 요청한다.
+- `projects: []`는 전체 프로젝트를 뜻한다. 범위를 지정하면 해당 ID만 사용할 수 있고, 관리자는 목록에 미리 지정한 ID를 생성할 수 있다. ID는 영문 소문자나 숫자로 시작하며 `-`, `_`를 쓸 수 있다. 생성된 폴더는 서버 `knowledge.root` 바로 아래에 생기고 재시작 없이 프로젝트 목록에 나타난다.
+- `accounts`를 사용하면 기존 단일 계정 및 관리자 계정 설정을 대체한다. 기존 제안을 계속 보려면 전환 후에도 기존 사용자명을 유지한다. `accounts`가 없는 설치는 기존 로그인·승인 설정을 사용한다.
+
+**학습 자료 관리 → 새 문서 작성**에서 프로젝트와 설명을 입력하고 초안을 미리 본 뒤 파일을 첨부한다. 기존 문서를 보완할 때도 첨부할 수 있다. PDF, DOCX, XLS/XLSX, 기존 지원 텍스트 파일과 PNG/JPG를 최대 3개, 파일당 8MB까지 올릴 수 있다. 이미지는 검색용 설명이 필수이며, 화면에 개인정보가 있다면 가리고 등록한다.
+
+승인된 문서의 본문과 이미지 설명을 검색에 반영한다. 첨부파일은 검색 참고 자료 아래에 표시되며, 대화창에서 이미지 미리보기 또는 파일 다운로드를 사용할 수 있다. 관리자 검토 화면에서도 첨부 내용을 확인할 수 있다. 제안을 철회하면 공유 검색과 출처 다운로드에서 제외된다. 제안 이력과 첨부파일은 서버의 `knowledge.index-path` 아래에 저장되므로 검색 색인과 함께 백업한다.
 
 ## 파일 기반 RAG
 

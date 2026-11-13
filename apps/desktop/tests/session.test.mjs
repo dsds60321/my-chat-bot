@@ -1,3 +1,4 @@
+import { apiBaseUrl } from '../src/api.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { LoginSession, AuthenticationError } from '../src/session.ts';
@@ -7,7 +8,7 @@ test('session is established only after real verification and keeps credentials 
   const username = '개발자';
   const password = 'test-only-password';
   t.mock.method(globalThis, 'fetch', async (url, options) => {
-    assert.equal(url, 'http://127.0.0.1:9001/api/session');
+    assert.equal(url, apiBaseUrl + '/api/session');
     assert.equal(options.credentials, 'omit');
     assert.equal(options.cache, 'no-store');
     assert.equal(options.redirect, 'error');
