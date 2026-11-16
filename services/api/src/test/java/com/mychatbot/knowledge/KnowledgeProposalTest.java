@@ -40,6 +40,7 @@ class KnowledgeProposalTest {
     }
 
     @Test void explicitConsentScopedReviewRestartAndWithdrawalControlRagAndDownload() throws Exception {
+        Files.createDirectories(temp.resolve("source/paye2u"));
         try (var knowledge = open()) {
             var draft = knowledge.draft(new KnowledgeProposalController.DraftRequest(
                     "ONBOARDING_LOOKUP 절차를 기록한다. 추가해 주세요.", "paye2u", null, null), author);
@@ -100,6 +101,8 @@ class KnowledgeProposalTest {
     }
 
     @Test void mixedSourceAmendmentInheritsBothProjectGrantsForApprovalSearchAndDownload() throws Exception {
+        Files.createDirectories(temp.resolve("source/paye2u"));
+        Files.createDirectories(temp.resolve("source/syslink"));
         Path wbs = source("E2U_WBS.xlsx", "");
         try (var workbook = new XSSFWorkbook()) {
             workbook.createSheet("업무사항").createRow(0).createCell(0).setCellValue("paye2u syslink WBS_PROCEDURE");

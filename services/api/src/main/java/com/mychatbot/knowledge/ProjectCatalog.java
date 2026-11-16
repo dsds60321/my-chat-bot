@@ -40,7 +40,7 @@ public class ProjectCatalog {
     }
 
     public Set<String> projects() {
-        Set<String> projects = new HashSet<>(KnowledgeService.SUPPORTED_PROJECTS);
+        Set<String> projects = new HashSet<>();
         try {
             KnowledgeService.rejectSymlinkParents(root);
             try (var children = Files.list(root)) {
@@ -50,7 +50,7 @@ public class ProjectCatalog {
                         .forEach(projects::add);
             }
         } catch (IOException | java.io.UncheckedIOException ignored) {
-            return KnowledgeService.SUPPORTED_PROJECTS;
+            return Set.of();
         }
         return Set.copyOf(projects);
     }

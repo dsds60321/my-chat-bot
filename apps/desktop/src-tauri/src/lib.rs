@@ -4,6 +4,7 @@ use tauri::{
     Emitter, Manager,
 };
 use tauri_plugin_window_state::StateFlags;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::path::Path;
@@ -231,10 +232,25 @@ fn show_pet(app: &tauri::AppHandle) {
     }
 }
 
+fn toggle_pet(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        match window.is_visible() {
+            Ok(true) => { let _ = window.hide(); }
+            Ok(false) => show_pet(app),
+            Err(error) => eprintln!("앱 표시 상태를 확인하지 못했어요: {error}"),
+        }
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AnswerState::default())
         .invoke_handler(tauri::generate_handler![set_branding_name, read_branding, open_answer, read_answer, close_answer, save_source, pet_drag_button_down])
+        .plugin(tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|app, _, event| {
+                if event.state() == ShortcutState::Pressed { toggle_pet(app); }
+            })
+            .build())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_pet(app)))
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -243,10 +259,25 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            let shortcut = "CommandOrControl+Shift+Space";
+            let shortcut_label = if cfg!(target_os = "macos") { "⌘ + Shift + Space" } else { "Ctrl + Shift + Space" };
+            let shortcut_available = match app.global_shortcut().register(shortcut) {
+                Ok(()) => true,
+                Err(error) => {
+                    eprintln!("표시·숨김 단축키를 등록하지 못했어요: {error}");
+                    false
+                }
+            };
+            let toggle_label = if shortcut_available {
+                format!("표시/숨김 · {shortcut_label}")
+            } else {
+                format!("표시/숨김 · {shortcut_label} 사용 불가")
+            };
+            let toggle = MenuItem::with_id(app, "toggle", toggle_label, true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "My Bot 표시", true, None::<&str>)?;
             let hide = MenuItem::with_id(app, "hide", "My Bot 숨김", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
+            let menu = Menu::with_items(app, &[&toggle, &show, &hide, &quit])?;
             app.manage(TrayLabels { show, hide });
             #[cfg(target_os = "macos")]
             let icon = tauri::image::Image::from_bytes(include_bytes!("../../../../assets/pet/tray-icon-macos.png"))?;
@@ -259,6 +290,7 @@ pub fn run() {
                 .menu(&menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "toggle" => toggle_pet(app),
                     "show" => show_pet(app),
                     "hide" => {
                         if let Some(window) = app.get_webview_window("main") {

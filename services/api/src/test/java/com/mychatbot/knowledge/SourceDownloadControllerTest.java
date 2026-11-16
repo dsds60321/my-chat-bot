@@ -24,8 +24,10 @@ import static org.mockito.Mockito.when;
 class SourceDownloadControllerTest {
     @Autowired WebTestClient client;
     @MockitoBean KnowledgeService knowledge;
+    @MockitoBean ProjectCatalog catalog;
 
     @Test void returnsAuthenticatedAttachmentWithOnlyServerProjects() {
+        when(catalog.projects()).thenReturn(Set.of("paye2u"));
         String id = "1".repeat(64);
         String version = "2".repeat(64);
         String path = "/api/sources/" + id;

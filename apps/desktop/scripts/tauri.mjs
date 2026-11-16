@@ -1,9 +1,16 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadEnv } from 'vite';
 import { buildTarget, cleanBuildOutputs } from './clean-build.mjs';
+
+const cargoBin = join(process.env.CARGO_HOME || join(homedir(), '.cargo'), 'bin');
+if (existsSync(join(cargoBin, process.platform === 'win32' ? 'cargo.exe' : 'cargo'))) {
+  process.env.PATH = [process.env.PATH, cargoBin].filter(Boolean).join(delimiter);
+}
 
 const args = process.argv.slice(2);
 const require = createRequire(import.meta.url);

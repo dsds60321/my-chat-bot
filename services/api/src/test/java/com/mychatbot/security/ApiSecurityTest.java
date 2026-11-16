@@ -26,8 +26,16 @@ import static org.springframework.security.test.web.reactive.server.SecurityMock
 class ApiSecurityTest {
     @Autowired WebTestClient client;
     @MockitoBean ChatService chat;
+    @MockitoBean com.mychatbot.knowledge.ProjectCatalog catalog;
     @MockitoBean KnowledgeSearch search;
+    private static com.mychatbot.knowledge.ProjectCatalog fixtureCatalog() {
+        var catalog = mock(com.mychatbot.knowledge.ProjectCatalog.class);
+        when(catalog.projects()).thenReturn(Set.of("paye2u", "syslink", "operations", "notes", "common"));
+        return catalog;
+    }
+
     @BeforeEach void setup() {
+        when(catalog.projects()).thenReturn(Set.of("paye2u", "syslink", "operations", "notes", "common"));
         client = client.mutate().baseUrl("http://127.0.0.1:8080").build();
         when(chat.stream(any(), any(), anyString())).thenAnswer(call -> Flux.just(
                 new StreamEvent("delta", new StreamEvent.Delta("test")),
@@ -35,7 +43,7 @@ class ApiSecurityTest {
         when(search.search(anyString(), anySet(), anyInt())).thenReturn(List.of());
     }
     @Test void directPublishRequiresAnExactConfiguredAccount() {
-        var accounts = new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus")).users("developer", "employee-test", "common",
+        var accounts = new ApiSecurity(fixtureCatalog()).users("developer", "employee-test", "common",
                 "reviewer", "admin-test", "common", "developer, *");
         StepVerifier.create(accounts.findByUsername("developer"))
                 .assertNext(user -> assertThat(user.getAuthorities()).extracting(a -> a.getAuthority())
@@ -67,14 +75,14 @@ class ApiSecurityTest {
         client.get().uri("/api/session").headers(h -> h.setBasicAuth("reviewer", "temporary-review-password"))
                 .exchange().expectStatus().isOk().expectBody()
                 .json("{\"username\":\"reviewer\",\"projects\":[\"syslink\"],\"admin\":true}");
-        StepVerifier.create(new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus")).users("developer", "employee-test", "", "reviewer", "employee-test", "syslink", "")
+        StepVerifier.create(new ApiSecurity(fixtureCatalog()).users("developer", "employee-test", "", "reviewer", "employee-test", "syslink", "")
                 .findByUsername("reviewer")).verifyComplete();
-        StepVerifier.create(new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus")).users("developer", "employee-test", "", "reviewer", "admin-test", "", "")
+        StepVerifier.create(new ApiSecurity(fixtureCatalog()).users("developer", "employee-test", "", "reviewer", "admin-test", "", "")
                 .findByUsername("reviewer"))
                 .assertNext(user -> assertThat(user.getAuthorities()).extracting(a -> a.getAuthority()).containsExactlyInAnyOrder(
                         "ROLE_EMPLOYEE", "ROLE_KNOWLEDGE_ADMIN", "PROJECT_paye2u", "PROJECT_syslink", "PROJECT_operations", "PROJECT_notes", "PROJECT_common"))
                 .verifyComplete();
-        StepVerifier.create(new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus")).users("developer", "employee-test", "", "reviewer", "admin-test", "unknown,*", "")
+        StepVerifier.create(new ApiSecurity(fixtureCatalog()).users("developer", "employee-test", "", "reviewer", "admin-test", "unknown,*", "")
                 .findByUsername("reviewer")).verifyComplete();
     }
     @Test void sessionValidatesCredentialsAndReturnsOnlyServerIdentityAndGrants() {
@@ -112,8 +120,8 @@ class ApiSecurityTest {
                 .exchange().expectStatus().isOk().expectHeader().valueEquals("Access-Control-Allow-Origin", "http://127.0.0.1:1420");
     }
     @Test void absentPasswordDisablesAccountAndProjectsAreServerAuthorities() {
-        StepVerifier.create(new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus")).users("developer", "", "paye2u", "", "", "", "").findByUsername("developer")).verifyComplete();
-        StepVerifier.create(new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus")).users("developer", "temporary-test", "paye2u,../bad", "", "", "", "").findByUsername("developer"))
+        StepVerifier.create(new ApiSecurity(fixtureCatalog()).users("developer", "", "paye2u", "", "", "", "").findByUsername("developer")).verifyComplete();
+        StepVerifier.create(new ApiSecurity(fixtureCatalog()).users("developer", "temporary-test", "paye2u,../bad", "", "", "", "").findByUsername("developer"))
                 .assertNext(user -> assertThat(user.getAuthorities()).extracting(a -> a.getAuthority()).containsExactlyInAnyOrder("ROLE_EMPLOYEE", "PROJECT_paye2u"))
                 .verifyComplete();
     }
@@ -129,7 +137,7 @@ class ApiSecurityTest {
     }
 
     @Test void blankProjectsDefaultToAllAndInvalidExplicitProjectsGrantNothing() {
-        ApiSecurity security = new ApiSecurity(new com.mychatbot.knowledge.ProjectCatalog("build/test-fixtures/no-corpus"));
+        ApiSecurity security = new ApiSecurity(fixtureCatalog());
         StepVerifier.create(security.users("developer", "temporary-test", " \t ", "", "", "", "").findByUsername("developer"))
                 .assertNext(user -> assertThat(user.getAuthorities()).extracting(a -> a.getAuthority()).containsExactlyInAnyOrder(
                         "ROLE_EMPLOYEE", "PROJECT_paye2u", "PROJECT_syslink", "PROJECT_operations", "PROJECT_notes", "PROJECT_common"))

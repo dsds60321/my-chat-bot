@@ -20,9 +20,11 @@ import static org.mockito.Mockito.when;
 class DefaultProjectAccessTest {
     @Autowired WebTestClient client;
     @MockitoBean KnowledgeSearch search;
+    @MockitoBean com.mychatbot.knowledge.ProjectCatalog catalog;
 
     @Test void authenticatedAccountWithoutConfiguredProjectsSearchesAllSupportedProjects() {
-        var projects = Set.of("paye2u", "syslink", "operations", "notes", "common");
+        var projects = Set.of("e2u", "paye2u");
+        when(catalog.projects()).thenReturn(projects);
         client.get().uri("/api/search?q=MCHT").exchange().expectStatus().isUnauthorized();
         verifyNoInteractions(search);
 
@@ -32,7 +34,7 @@ class DefaultProjectAccessTest {
         verify(search).search("MCHT", projects, 10);
         client.get().uri("/api/session").headers(h -> h.setBasicAuth("developer", "temporary-test-password"))
                 .exchange().expectStatus().isOk().expectBody().json("""
-                        {"username":"developer","projects":["paye2u","syslink","operations","notes","common"]}
+                        {"username":"developer","projects":["e2u","paye2u"]}
                         """);
     }
 }

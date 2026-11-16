@@ -30,13 +30,17 @@ class KnowledgeServiceTest {
         Path root = temp.toRealPath().resolve("source");
         var catalog = new ProjectCatalog(root.toString());
         try (var knowledge = service()) {
-            assertThat(catalog.projects()).doesNotContain("e2u");
+            assertThat(catalog.projects()).isEmpty();
             Files.createDirectory(root.resolve("e2u"));
             Files.createSymbolicLink(root.resolve("linked"), root.resolve("e2u"));
-            assertThat(catalog.projects()).contains("e2u").doesNotContain("linked");
+            assertThat(catalog.projects()).containsExactly("e2u");
             source("e2u/guide.md", "# Guide\nNEW_PROJECT_LOOKUP paye2u syslink");
             assertThat(knowledge.search("NEW_PROJECT_LOOKUP", Set.of("e2u"), 4))
                     .extracting(SearchHit::project).containsExactly("e2u");
+            Files.delete(root.resolve("e2u/guide.md"));
+            Files.delete(root.resolve("e2u"));
+            assertThat(catalog.projects()).isEmpty();
+            assertThat(knowledge.search("NEW_PROJECT_LOOKUP", Set.of("e2u"), 4)).isEmpty();
             assertThat(knowledge.search("NEW_PROJECT_LOOKUP", Set.of("paye2u", "syslink"), 4)).isEmpty();
         }
     }
@@ -257,6 +261,8 @@ class KnowledgeServiceTest {
     }
 
     @Test void rootWbsSearchAndOriginalDownloadRequireBothProjects() throws Exception {
+        Files.createDirectories(temp.resolve("source/paye2u"));
+        Files.createDirectories(temp.resolve("source/syslink"));
         Path workbookPath = source("E2U_WBS.xlsx", "");
         Path sameNameElsewhere = source("notes/E2U_WBS.xlsx", "");
         try (var workbook = new XSSFWorkbook()) {
