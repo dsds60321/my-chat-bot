@@ -17,7 +17,7 @@ spring:
       fail-on-unknown-properties: true
 
 server:
-  address: 127.0.0.1
+  address: 0.0.0.0
   port: 9001
   error:
     include-message: never
@@ -46,6 +46,7 @@ pet:
     requests-per-minute: 12
 
 knowledge:
-  root: ../../data/knowledge
-  index-path: ../../.local/knowledge-index
+  root: ./data/knowledge
+  store-path: ./data/knowledge-submissions
+  index-path: ./.local/knowledge-index
   poll-ms: 5000

@@ -17,6 +17,10 @@ final class PublishedKnowledge {
     private final Path store;
     private final ObjectMapper json = new ObjectMapper();
     private Map<String, Publication> publications;
+    private String ledgerVersion;
+    static final class StoreUnavailable extends IOException {
+        StoreUnavailable(IOException cause) { super("publication-store-unavailable", cause); }
+    }
 
     PublishedKnowledge(Path root, Path store) { this.root = root; this.store = store; }
 
@@ -55,7 +59,11 @@ final class PublishedKnowledge {
     }
 
     boolean owns(String path) {
-        return publications.values().stream().anyMatch(publication -> publication.files().stream().anyMatch(file -> file.path().equals(path)));
+        return publications.values().stream().anyMatch(publication -> {
+            String group = (publication.folder().isEmpty() ? "" : publication.folder() + "/") + "attachments/" + publication.id();
+            return path.equals(group) || path.startsWith(group + "/") || publication.files().stream()
+                    .anyMatch(file -> file.path().equals(path) || path.startsWith(file.path() + "/"));
+        });
     }
 
     Set<String> ids() { return Set.copyOf(publications.keySet()); }
@@ -65,6 +73,10 @@ final class PublishedKnowledge {
         if (publication == null) return false;
         try {
             for (OwnedFile owned : publication.files()) if (!matches(root.resolve(owned.path()), owned.version())) return false;
+            for (var attachment : proposal.attachments()) {
+                if (!attachment.documentId().matches("[0-9a-f]{64}") || !attachment.version().matches("[0-9a-f]{64}")
+                        || !matches(store.resolve("attachments").resolve(attachment.documentId()), attachment.version())) return false;
+            }
             return true;
         } catch (IOException ex) { return false; }
     }
@@ -119,6 +131,16 @@ final class PublishedKnowledge {
                 throw new IOException("publication-path-conflict");
             }
         }
+        if (previous == null) {
+            Path group = root.resolve(prefix + "attachments/" + proposal.id());
+            KnowledgeService.rejectSymlinkParents(group);
+            if (Files.exists(group, LinkOption.NOFOLLOW_LINKS)) {
+                if (!Files.isDirectory(group, LinkOption.NOFOLLOW_LINKS)) throw new IOException("publication-group-conflict");
+                try (var children = Files.list(group)) {
+                    if (children.findAny().isPresent()) throw new IOException("publication-group-conflict");
+                }
+            }
+        }
         if (previous == null || !previous.files().equals(expected)) {
             publications.put(proposal.id(), new Publication(proposal.id(), folder, List.copyOf(expected)));
             try { save(); } catch (IOException failure) {
@@ -156,10 +178,24 @@ final class PublishedKnowledge {
         }
     }
 
+    void verifyStore() throws IOException {
+        load();
+        Path file = store.resolve("published-files.json");
+        Path marker = store.resolve(".published-initialized");
+        KnowledgeService.rejectSymlinkParents(file);
+        KnowledgeService.rejectSymlinkParents(marker);
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) > 16 * 1024 * 1024
+                || !Files.isRegularFile(marker, LinkOption.NOFOLLOW_LINKS)
+                || !hash(Files.readAllBytes(file)).equals(ledgerVersion)) throw new IOException("publication-store-changed");
+    }
+
     private void save() throws IOException {
-        byte[] bytes = json.writeValueAsBytes(publications.values());
-        if (bytes.length > 16 * 1024 * 1024) throw new IOException("publication-store-limit");
-        write(store.resolve("published-files.json"), bytes, true);
+        try {
+            byte[] bytes = json.writeValueAsBytes(publications.values());
+            if (bytes.length > 16 * 1024 * 1024) throw new IOException("publication-store-limit");
+            write(store.resolve("published-files.json"), bytes, true);
+            ledgerVersion = hash(bytes);
+        } catch (IOException failure) { throw new StoreUnavailable(failure); }
     }
 
     private static void write(Path path, byte[] bytes, boolean replace) throws IOException {

@@ -11,6 +11,8 @@ import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.FileVisitResult;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -87,6 +89,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
     private final Path storePath;
     private final ProjectCatalog projectCatalog;
     private final PublishedKnowledge published;
+    private final Set<String> unavailablePublications = new HashSet<>();
     private final ObjectMapper json = new ObjectMapper();
     private final DocumentExtractor extractor = new DocumentExtractor();
     private final Map<String, Entry> entries = new LinkedHashMap<>();
@@ -171,14 +174,24 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
             rejectSymlinkParents(root);
             if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) throw new IOException("source-unavailable");
             loadProposals();
-            published.load();
-            List<Path> paths;
-            try (var walk = Files.walk(root)) {
-                paths = walk.filter(path -> !Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS))
-                    .filter(path -> !published.owns(root.relativize(path).toString().replace('\\', '/')))
-                    .sorted().limit(10001).toList();
-            }
-            if (paths.size() > 10000) throw new IOException("source-file-limit");
+            published.verifyStore();
+            List<Path> paths = new ArrayList<>();
+            Files.walkFileTree(root, new SimpleFileVisitor<>() {
+                private boolean owned(Path path) { return published.owns(root.relativize(path).toString().replace('\\', '/')); }
+                @Override public FileVisitResult preVisitDirectory(Path path, BasicFileAttributes attributes) {
+                    return owned(path) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+                }
+                @Override public FileVisitResult visitFile(Path path, BasicFileAttributes attributes) throws IOException {
+                    if (!owned(path)) paths.add(path);
+                    if (paths.size() > 10000) throw new IOException("source-file-limit");
+                    return FileVisitResult.CONTINUE;
+                }
+                @Override public FileVisitResult visitFileFailed(Path path, IOException failure) throws IOException {
+                    if (!owned(path)) throw failure;
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+            paths.sort(Comparator.naturalOrder());
             Set<String> seen = new HashSet<>();
             Set<String> projects = projectCatalog.projects();
             for (Path path : paths) {
@@ -806,24 +819,36 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
     }
 
     private void syncPublishedProposals() throws IOException {
-        for (String id : published.ids()) {
+        unavailablePublications.clear();
+        Set<String> ids = new HashSet<>(published.ids());
+        ids.addAll(proposals.keySet());
+        for (String id : ids) {
             KnowledgeProposal proposal = proposals.get(id);
-            if (!indexableProposal(proposal)) published.archive(id);
+            try {
+                if (indexableProposal(proposal)) published.publish(proposal, publicationFolder(proposal));
+                else published.archive(id);
+            } catch (PublishedKnowledge.StoreUnavailable systemic) {
+                throw systemic;
+            } catch (IOException unavailable) {
+                unavailablePublications.add(id);
+                LOG.warn("Knowledge publication {} unavailable ({})", id, unavailable.getClass().getSimpleName());
+            }
         }
-        for (KnowledgeProposal proposal : proposals.values()) {
-            if (indexableProposal(proposal)) published.publish(proposal, publicationFolder(proposal));
-        }
+    }
+
+    private boolean availablePublication(KnowledgeProposal proposal) {
+        return indexableProposal(proposal) && !unavailablePublications.contains(proposal.id()) && published.ready(proposal);
     }
 
     private void syncApprovedProposals() throws IOException {
         for (Entry entry : List.copyOf(approvedEntries.values())) {
-            if (!indexableProposal(proposals.get(proposalId(entry.path()))) || !published.ready(proposals.get(proposalId(entry.path())))) {
+            if (!availablePublication(proposals.get(proposalId(entry.path())))) {
                 writer.deleteDocuments(new Term("documentId", entry.documentId()));
                 approvedEntries.remove(entry.path());
             }
         }
         for (KnowledgeProposal proposal : proposals.values()) {
-            if (!indexableProposal(proposal) || !published.ready(proposal)) continue;
+            if (!availablePublication(proposal)) continue;
             String path = PROPOSAL_PATH_PREFIX + proposal.id() + ".md";
             if (approvedEntries.containsKey(path)) continue;
             byte[] markdown = proposalMarkdown(proposal);
@@ -878,7 +903,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
 
     private boolean mayReadApproved(Entry entry, AccessContext access) {
         KnowledgeProposal proposal = proposals.get(proposalId(entry.path()));
-        return proposal != null && proposal.state() == State.APPROVED && published.ready(proposal) && mayAccessProposal(proposal, access)
+        return availablePublication(proposal) && mayAccessProposal(proposal, access)
                 && (proposal.kind() == Kind.NEW || currentApprovedBase(proposal));
     }
 

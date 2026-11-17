@@ -83,7 +83,7 @@ class PublishedKnowledgeTest {
             Files.writeString(body(edited), "MANUAL_EDIT_LOOKUP user changed this copy");
             assertThat(service.download(id, version, admin)).isEmpty();
             assertThat(service.search("EDITED_COPY_LOOKUP", admin, 4)).isEmpty();
-            assertThat(service.status().healthy()).isFalse();
+            assertThat(service.status().healthy()).isTrue();
             service.withdrawProposal(intact.id(), admin);
             service.withdrawProposal(edited.id(), admin);
             assertThat(Files.exists(body(intact))).isFalse();
