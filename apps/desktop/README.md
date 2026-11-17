@@ -9,6 +9,7 @@ npm run build
 npm run dev                      # 브라우저 UI 체험, 127.0.0.1:1420
 npm run tauri -- dev              # 실제 데스크톱
 npm run tauri -- build --debug --no-bundle
+npm run build:all                 # Mac에서 macOS 앱 + Windows x64 설치 파일 순서로 배포 빌드
 ```
 
 Node 22.12 이상과 검증된 Rust stable 1.99.1, 해당 OS의 Tauri 빌드 도구가 필요합니다. Node 23.7.0에서 설치/프론트 빌드/테스트를 확인했습니다. Vite 8.3.8의 공식 engines(`^20.19.0 || >=22.12.0`)에 맞춥니다. 재현 가능한 의존성은 npm lockfile/Cargo.lock에 기록합니다. 테스트는 Node 내장 test runner와 type stripping을 사용하며 Node 23에서는 experimental 경고가 표시됩니다.

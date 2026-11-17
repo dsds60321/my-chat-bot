@@ -153,6 +153,16 @@ npm run tauri -- build --runner cargo-xwin --target x86_64-pc-windows-msvc
 
 결과는 위 Windows 빌드와 같은 `apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`의 `*-setup.exe`다. 교차 빌드는 실험적 지원이므로 전달 전 실제 Windows에서 설치·로그인을 확인한다. [Tauri Windows 설치 파일 안내](https://v2.tauri.app/distribute/windows-installer/)
 
+### Mac에서 macOS·Windows를 한 번에 빌드
+
+위의 Windows 교차 빌드 도구를 준비한 Mac에서 `apps/desktop`으로 이동해 실행한다.
+
+```sh
+npm run build:all
+```
+
+Homebrew의 LLVM·LLD 경로를 자동으로 설정하고 macOS 앱 → Windows x64 NSIS 설치 파일 순서로 release 빌드한다. 첫 빌드가 실패하면 다음 빌드는 실행하지 않는다. API 주소와 앱 이름은 기존 `.env` 및 `branding.json` 설정을 그대로 사용한다. macOS 결과는 `src-tauri/target/release/bundle/macos/`, Windows 결과는 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`에 각각 남는다. 기존 대상별 빌드 정리 정책도 동일하게 적용된다.
+
 ### 개발 빌드와 기존 설치 교체
 
 `--debug`를 넣으면 `release/` 대신 `debug/`에 결과가 생성된다. 예를 들어 Mac 디버그 앱은 `apps/desktop/src-tauri/target/debug/bundle/macos/<앱 이름>.app`에 있다.

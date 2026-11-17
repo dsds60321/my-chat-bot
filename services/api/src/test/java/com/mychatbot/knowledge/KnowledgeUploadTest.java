@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.web.reactive.function.BodyInserters.fromMultipartData;
 
 @SpringBootTest(properties = {
+        "spring.config.location=classpath:/application-test-fixture.properties",
         "ai.provider=mock",
         "pet.api.accounts[0].username=curator", "pet.api.accounts[0].password=curator-test",
         "pet.api.accounts[0].grade=admin", "pet.api.accounts[0].projects[0]=payments-guide",
@@ -41,6 +42,7 @@ class KnowledgeUploadTest {
         Path real = folder.toRealPath();
         registry.add("knowledge.root", () -> real.resolve("source").toString());
         registry.add("knowledge.index-path", () -> real.resolve("index").toString());
+        registry.add("knowledge.store-path", () -> real.resolve("store").toString());
     }
 
     @Test void projectGrantsAndAttachmentApprovalApplyToUploadsSearchAndDownloads() throws Exception {

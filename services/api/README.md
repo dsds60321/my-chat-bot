@@ -57,10 +57,11 @@ JDK 17에서는 Lucene 9.12.3을 사용한다. 이전 Lucene 10 검색 색인은
 
 ```text
 배포폴더/
-├── app.jar
+├── e2u-chat-bot.jar
 ├── bin/
 │   ├── start.sh
-│   └── stop.sh
+│   ├── stop.sh
+│   └── logback-spring.xml
 ├── .secret/application.yml
 └── data/
 ```
@@ -73,6 +74,26 @@ chmod +x bin/start.sh bin/stop.sh
 ./bin/stop.sh
 ```
 
-실행할 Java를 지정하려면 `JAVA_HOME`을 설정한다. 시작 스크립트는 `app.jar`를 우선 사용하고, 개발 저장소에서는 `build/libs/`의 실행 JAR를 찾는다. PID는 배포 폴더의 `.local/api.pid`, 실행 로그는 `logs/api-날짜-시간-PID.log`에 기록한다. 시작 명령은 프로세스를 띄우며 최종 기동 성공 여부는 로그의 `Started MyChatBotApplication`으로 확인한다. 종료 명령은 해당 PID의 앱 경로를 확인한 뒤 정상 종료를 요청하고 최대 30초 기다린다.
+실행할 Java를 지정하려면 `JAVA_HOME`을 설정한다. 시작 스크립트는 배포 폴더의 `e2u-chat-bot.jar`만 실행한다. 이 파일이 없으면 오류로 종료하며 백업 JAR나 `build/libs/`를 자동 탐색하지 않는다. 개발 빌드도 실행 전에 해당 이름으로 배포 폴더에 복사한다. PID는 배포 폴더의 `.local/api.pid`에 기록한다. 시작 명령은 프로세스를 띄우며 최종 기동 성공 여부는 `logs/root.txt`의 `Started MyChatBotApplication`으로 확인한다. JVM 실행·로깅 초기화 전 오류와 표준 출력/오류는 별도 파일 없이 실행한 터미널에 표시한다. 이 출력은 터미널 연결 종료 후에는 보관되지 않는다. 앱의 일반 로그는 계속 `root.txt`에 기록한다. 종료 명령은 해당 PID의 앱 경로를 확인한 뒤 정상 종료를 요청하고 최대 30초 기다린다.
 
-새 JAR 배포는 **종료 → app.jar 교체 → 시작** 순서로 진행한다. 이 스크립트의 시작은 서버 재부팅 후 자동 실행 등록까지 포함하지 않는다.
+### 일별 로그와 압축
+
+`start.sh`와 함께 `bin/logback-spring.xml`을 배포한다. 스크립트가 이 외부 설정을 지정하므로 로그 설정 변경만으로 JAR를 다시 빌드할 필요는 없다.
+
+```text
+logs/
+├── root.txt             # 현재 애플리케이션 로그
+└── 20261116.txt.gz      # 지난 날짜의 압축 로그
+```
+
+- 같은 날 재시작하면 `root.txt`에 이어 쓴다. 서버를 계속 실행해도 날짜가 바뀐 뒤 첫 로그에서 이전 날짜를 `yyyyMMdd.txt.gz`로 압축하고 새 `root.txt`에 기록한다. 날짜는 서버의 기본 시간대 기준이다.
+- 서버가 여러 날 꺼져 있었다가 시작해도 이전 `root.txt`의 날짜를 기준으로 회전한다. 자정에 로그가 없으면 다음 로그가 기록될 때 회전한다.
+- 시작 스크립트는 로그 폴더를 탐색하거나 직접 압축하지 않는다. 현재 `root.txt`의 일별 회전과 압축은 Logback이 담당하며, 이전 방식의 로그 파일은 자동 정리하지 않는다.
+- 압축 이력의 보관 기간 제한은 추가하지 않는다.
+
+```sh
+tail -f logs/root.txt
+zcat logs/20261116.txt.gz
+```
+
+새 JAR 배포는 **종료 → e2u-chat-bot.jar 교체 → 시작** 순서로 진행한다. 이 스크립트의 시작은 서버 재부팅 후 자동 실행 등록까지 포함하지 않는다.
