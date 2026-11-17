@@ -19,7 +19,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.mockUser;
 
-@WebFluxTest(controllers = {ChatController.class, SearchController.class, SessionController.class}, properties = {"knowledge.root=build/test-fixtures/no-corpus",
+@WebFluxTest(controllers = {ChatController.class, SearchController.class, SessionController.class}, properties = {"spring.config.location=classpath:/application-test-fixture.properties", "pet.api.knowledge.direct-publish-users=developer", "knowledge.root=build/test-fixtures/no-corpus",
         "spring.main.web-application-type=reactive", "spring.jackson.deserialization.fail-on-unknown-properties=true", "pet.api.password=temporary-test-password", "pet.api.projects=paye2u", "pet.api.requests-per-minute=100",
         "pet.api.admin.user=reviewer", "pet.api.admin.password=temporary-review-password", "pet.api.admin.projects=syslink"})
 @Import({ApiSecurity.class, com.mychatbot.knowledge.ProjectCatalog.class, ApiErrors.class, RequestLimiter.class})
@@ -40,7 +40,7 @@ class ApiSecurityTest {
         when(chat.stream(any(), any(), anyString())).thenAnswer(call -> Flux.just(
                 new StreamEvent("delta", new StreamEvent.Delta("test")),
                 new StreamEvent("done", new StreamEvent.Done(call.getArgument(2), "mock"))));
-        when(search.search(anyString(), anySet(), anyInt())).thenReturn(List.of());
+        when(search.search(anyString(), any(AccessContext.class), anyInt())).thenReturn(List.of());
     }
     @Test void directPublishRequiresAnExactConfiguredAccount() {
         var accounts = new ApiSecurity(fixtureCatalog()).users("developer", "employee-test", "common",
@@ -64,7 +64,7 @@ class ApiSecurityTest {
         client.get().uri("/api/search?q=MCHT&projects=operations")
                 .headers(h -> { h.setBasicAuth("developer", "temporary-test-password"); h.set("X-Projects", "operations"); })
                 .exchange().expectStatus().isOk().expectBody().json("[]");
-        verify(search).search(eq("MCHT"), eq(Set.of("paye2u")), eq(10));
+        verify(search).search(eq("MCHT"), eq(new AccessContext("developer", Set.of("paye2u"), true)), eq(10));
     }
     @Test void administratorUsesSeparateCredentialsAndExplicitProjectGrants() {
         client.get().uri("/api/knowledge/admin/proposals")

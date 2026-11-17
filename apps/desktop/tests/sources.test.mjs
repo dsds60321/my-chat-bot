@@ -32,3 +32,50 @@ test('answer snapshots keep valid attachments with only their public metadata', 
     attachments: [{ ...file, password: 'omit' }, { ...file, documentId: '../private' }] }] });
   assert.deepEqual(snapshot.sources[0].attachments, [file]);
 });
+
+test('answer attachments load images automatically once per source and keep downloads explicit', async t => {
+  class Node extends EventTarget {
+    children = []; textContent = ''; isConnected = true; attributes = new Map();
+    append(...children) { this.children.push(...children); }
+    replaceChildren(...children) { this.children = children; }
+    querySelector(tag) { return this.children.find(node => node.tag === tag) ?? null; }
+    setAttribute(name, value) { this.attributes.set(name, value); }
+    hasAttribute(name) { return this.attributes.has(name); }
+  }
+  const priorDocument = globalThis.document;
+  const priorButton = globalThis.HTMLButtonElement;
+  globalThis.HTMLButtonElement = Node;
+  globalThis.document = {
+    createElement(tag) { const node = new Node(); node.tag = tag; return node; },
+    getElementById() { return null; },
+  };
+  const { renderSources } = await import('../src/sources.ts');
+  try {
+    const file = { documentId: 'a'.repeat(64), version: 'b'.repeat(64), filename: '화면.png', description: '취소 화면', image: true };
+    const source = { title: '절차', path: 'guide.md', attachments: [file] };
+    const loaded = []; const downloaded = [];
+    renderSources(new Node(), [source, source], value => downloaded.push(value), (value, image) => loaded.push([value, image.tag]));
+    await Promise.resolve();
+    assert.deepEqual(loaded, [[file, 'img']]);
+    assert.deepEqual(downloaded, []);
+    loaded.length = 0;
+    renderSources(new Node(), [source], () => {}, value => loaded.push(value), false);
+    await Promise.resolve();
+    assert.deepEqual(loaded, []);
+  } finally {
+    globalThis.document = priorDocument;
+    globalThis.HTMLButtonElement = priorButton;
+  }
+});
+
+test('inline image rendering accepts image data only and ignores detached answer windows', async () => {
+  const { displaySourceImage } = await import('../src/sources.ts');
+  const image = { isConnected: true, src: '', async decode() {}, removeAttribute() { this.src = ''; } };
+  await assert.rejects(displaySourceImage(image, 'https://external.invalid/pixel'));
+  await assert.rejects(displaySourceImage(image, 'data:text/html;base64,PHNjcmlwdD4='));
+  await displaySourceImage(image, 'data:image/png;base64,YWJj');
+  assert.equal(image.src, 'data:image/png;base64,YWJj');
+  image.isConnected = false; image.src = '';
+  await displaySourceImage(image, 'data:image/png;base64,YWJj');
+  assert.equal(image.src, '');
+});

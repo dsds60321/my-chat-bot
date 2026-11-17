@@ -24,7 +24,7 @@ class KnowledgeProposalTest {
         Path original = source("paye2u/procedure.md", "# 절차\nDIRECT_ORIGINAL");
         var publisher = new AccessContext(author.userId(), author.projects(), true);
         try (var knowledge = open()) {
-            var base = knowledge.search("DIRECT_ORIGINAL", publisher.projects(), 4).getFirst();
+            var base = knowledge.search("DIRECT_ORIGINAL", publisher.projects(), 4).get(0);
             assertCode(() -> knowledge.submit(new KnowledgeProposalController.SubmitRequest(
                     base.project(), base.documentId(), base.version(), "정정", "변경", BooleanNode.FALSE), publisher),
                     "PROPOSAL_CONSENT_REQUIRED");
@@ -62,9 +62,9 @@ class KnowledgeProposalTest {
                     .allMatch(SearchHit::approvedKnowledge);
         }
         try (var reopened = open()) {
-            var approved = reopened.ownProposals(author.userId()).getFirst();
+            var approved = reopened.ownProposals(author.userId()).get(0);
             assertThat(approved.state()).isEqualTo(State.APPROVED);
-            var hit = reopened.search("ONBOARDING_LOOKUP", author.projects(), 4).getFirst();
+            var hit = reopened.search("ONBOARDING_LOOKUP", author.projects(), 4).get(0);
             assertThat(reopened.search("ONBOARDING_LOOKUP", other.projects(), 4)).isEmpty();
             assertThat(reopened.download(hit.documentId(), hit.version(), other.projects())).isEmpty();
             byte[] markdown = reopened.download(hit.documentId(), hit.version(), author.projects()).orElseThrow().bytes();
@@ -80,7 +80,7 @@ class KnowledgeProposalTest {
         Path original = source("paye2u/procedure.md", "# 처음\n일반 소개\n\n# 정산 절차\nAMENDMENT_LOOKUP 이전 처리 단계");
         byte[] originalBytes = Files.readAllBytes(original);
         try (var knowledge = open()) {
-            var base = knowledge.search("AMENDMENT_LOOKUP", author.projects(), 4).getFirst();
+            var base = knowledge.search("AMENDMENT_LOOKUP", author.projects(), 4).get(0);
             var preview = knowledge.draft(new KnowledgeProposalController.DraftRequest(
                     "AMENDMENT_LOOKUP 처리 단계에는 검증 절차를 포함한다. 추가해 줘", base.project(), base.documentId(), base.version()), author);
             assertThat(preview.before()).contains("이전 처리 단계");
@@ -90,7 +90,7 @@ class KnowledgeProposalTest {
             knowledge.reviewProposal(first.id(), admin, State.APPROVED);
             assertCode(() -> knowledge.reviewProposal(second.id(), admin, State.APPROVED), "PROPOSAL_CONFLICT");
             assertThat(Files.readAllBytes(original)).isEqualTo(originalBytes);
-            var hit = knowledge.search("NEW_APPROVED_DETAIL", author.projects(), 4).getFirst();
+            var hit = knowledge.search("NEW_APPROVED_DETAIL", author.projects(), 4).get(0);
             assertThat(hit.approvedKnowledge()).isTrue();
             Files.writeString(original, "# 정산 절차\nAMENDMENT_LOOKUP 원본의 새 버전");
             assertThat(knowledge.download(hit.documentId(), hit.version(), author.projects())).isEmpty();
@@ -112,14 +112,14 @@ class KnowledgeProposalTest {
         var mixedAuthor = new AccessContext(author.userId(), projects);
         var mixedAdmin = new AccessContext(admin.userId(), projects);
         try (var knowledge = open()) {
-            var base = knowledge.search("WBS_PROCEDURE", projects, 4).getFirst();
+            var base = knowledge.search("WBS_PROCEDURE", projects, 4).get(0);
             assertCode(() -> knowledge.submit(request("paye2u", base, "변경 내용"), author), "PROPOSAL_NOT_FOUND");
             assertCode(() -> knowledge.submit(request(base.project(), base, "변경 내용"), author), "PROPOSAL_NOT_FOUND");
             var pending = knowledge.submit(request(base.project(), base, "APPROVED_WBS_DETAIL 보완 내용"), mixedAuthor);
             assertThat(knowledge.pendingProposals(admin)).isEmpty();
             assertCode(() -> knowledge.reviewProposal(pending.id(), admin, State.APPROVED), "PROPOSAL_NOT_FOUND");
             knowledge.reviewProposal(pending.id(), mixedAdmin, State.APPROVED);
-            var hit = knowledge.search("APPROVED_WBS_DETAIL", projects, 4).getFirst();
+            var hit = knowledge.search("APPROVED_WBS_DETAIL", projects, 4).get(0);
             assertThat(hit.approvedKnowledge()).isTrue();
             assertThat(knowledge.search("APPROVED_WBS_DETAIL", author.projects(), 4)).isEmpty();
             assertThat(knowledge.search("APPROVED_WBS_DETAIL", other.projects(), 4)).isEmpty();

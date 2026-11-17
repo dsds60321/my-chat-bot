@@ -38,6 +38,70 @@ class ChatServiceTest {
         return new AiProviderRouter(properties, List.of(providers));
     }
 
+    private static SearchHit selectionHit(String id, String text, boolean approved) {
+        return new SearchHit(id, "e2u/" + id + ".md", text, "e2u", "operations", "md", "b".repeat(64),
+                id + ":1", "절차", 21, text, 1, approved);
+    }
+
+    @Test void multipleDocumentsRequireSelectionWithoutCallingAnyProvider() {
+        AtomicInteger calls = new AtomicInteger();
+        var first = selectionHit("1".repeat(64), "가맹점 이관", false);
+        var second = selectionHit("2".repeat(64), "혼합 매입사 서비스", true);
+        var service = new ChatService(router(provider(calls)), (q, p, l) -> List.of(first, first, second));
+        var events = service.stream(new ChatRequest("앱 가맹점 이관", null),
+                new AccessContext("u", Set.of("e2u")), "id").collectList().block();
+        assertThat(calls).hasValue(0);
+        assertThat(events).extracting(StreamEvent::event).containsExactly("sources", "candidates", "delta", "done");
+        var candidates = (java.util.Map<?, ?>) events.get(1).data();
+        assertThat((List<?>) candidates.get("items")).hasSize(2);
+    }
+
+    @Test void selectedDocumentAloneReachesProviderAndSources() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        String id = "1".repeat(64);
+        var service = new ChatService(router(provider("test", request -> {
+            calls.incrementAndGet();
+            assertThat(request.context()).contains("MERCHANT_TRANSFER").doesNotContain("ACQUIRER_MIX");
+            return Flux.just("이관 안내");
+        })), (q, projects, limit) -> {
+            assertThat(projects).containsExactly("e2u");
+            return List.of(selectionHit(id, "MERCHANT_TRANSFER", false),
+                    selectionHit("2".repeat(64), "ACQUIRER_MIX", true));
+        });
+        var events = service.stream(new ChatRequest("가맹점 이관", null, id, "b".repeat(64)),
+                new AccessContext("u", Set.of("e2u")), "id").collectList().block();
+        assertThat(calls).hasValue(1);
+        assertThat(events).extracting(StreamEvent::event).doesNotContain("candidates");
+        assertThat(new ObjectMapper().writeValueAsString(events.get(0).data()))
+                .contains(id).doesNotContain("2".repeat(64));
+    }
+
+    @Test void changedOrInaccessibleSelectionCannotFallBackToAnotherDocument() {
+        AtomicInteger calls = new AtomicInteger();
+        var service = new ChatService(router(provider(calls)), (q, p, l) ->
+                List.of(selectionHit("2".repeat(64), "OTHER_DOCUMENT", false)));
+        for (ChatRequest request : List.of(
+                new ChatRequest("이관", null, "1".repeat(64), "b".repeat(64)),
+                new ChatRequest("이관", null, "2".repeat(64), "c".repeat(64)),
+                new ChatRequest("이관", null, "2".repeat(64), null))) {
+            var events = service.stream(request, new AccessContext("u", Set.of("e2u")), "id").collectList().block();
+            assertThat(events).singleElement().satisfies(event ->
+                    assertThat(event.data()).isInstanceOfSatisfying(StreamEvent.Failure.class,
+                            failure -> assertThat(failure.code()).isEqualTo("SOURCE_SELECTION_CHANGED")));
+        }
+        assertThat(calls).hasValue(0);
+    }
+
+    @Test void chunksFromOneDocumentCanAnswerWithoutAnExtraSelection() {
+        AtomicInteger calls = new AtomicInteger();
+        var hit = selectionHit("1".repeat(64), "이관 절차", false);
+        var service = new ChatService(router(provider(calls)), (q, p, l) -> List.of(hit, hit));
+        var events = service.stream(new ChatRequest("이관", null),
+                new AccessContext("u", Set.of("e2u")), "id").collectList().block();
+        assertThat(calls).hasValue(1);
+        assertThat(events).extracting(StreamEvent::event).doesNotContain("candidates");
+    }
+
     @ParameterizedTest
     @NullSource
     @ValueSource(strings = {"auto", "work"})
@@ -59,7 +123,7 @@ class ChatServiceTest {
         });
         var events = service.stream(new ChatRequest("MCHT 컬럼", null), new AccessContext("u", Set.of("paye2u")), "id").collectList().block();
         assertThat(calls).hasValue(1);
-        String json = new ObjectMapper().writeValueAsString(events.getFirst().data());
+        String json = new ObjectMapper().writeValueAsString(events.get(0).data());
         assertThat(json).contains("MCHT 정의", "documentId").doesNotContain("merchantId", "\"text\"");
     }
 

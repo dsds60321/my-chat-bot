@@ -7,7 +7,7 @@ group = 'com.mychatbot'
 version = '0.1.0-SNAPSHOT'
 
 java {
-    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+    toolchain { languageVersion = JavaLanguageVersion.of(17) }
 }
 
 repositories { mavenCentral() }
@@ -17,9 +17,9 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
-    implementation 'org.apache.lucene:lucene-core:10.6.0'
-    implementation 'org.apache.lucene:lucene-analysis-common:10.6.0'
-    implementation 'org.apache.lucene:lucene-analysis-nori:10.6.0'
+    implementation 'org.apache.lucene:lucene-core:9.12.3'
+    implementation 'org.apache.lucene:lucene-analysis-common:9.12.3'
+    implementation 'org.apache.lucene:lucene-analysis-nori:9.12.3'
     implementation 'org.apache.poi:poi-ooxml:6.0.0'
     implementation 'org.apache.tika:tika-core:3.3.3'
     implementation 'org.apache.tika:tika-parsers-standard-package:3.3.3'

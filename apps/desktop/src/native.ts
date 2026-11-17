@@ -2,7 +2,6 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { LogicalSize, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
 import { availableMonitors, currentMonitor, getCurrentWindow, primaryMonitor, type Window } from '@tauri-apps/api/window';
-import { saveWindowState, StateFlags } from '@tauri-apps/plugin-window-state';
 import { fitToWorkArea, resizeFromEdge, type ResizeDirection } from './logic.ts';
 
 export const native = isTauri();
@@ -37,7 +36,7 @@ export async function resizeWindow(open: boolean, adjustment = 0): Promise<boole
   await win.setSize(new LogicalSize(rect.width / scale, rect.height / scale));
   await win.setPosition(new PhysicalPosition(rect.x, rect.y));
   expanded = open;
-  try { await saveWindowState(StateFlags.POSITION | StateFlags.SIZE); return true; }
+  try { await invoke('save_window_geometry'); return true; }
   catch { return false; }
 }
 
@@ -103,7 +102,14 @@ export async function initializeWindow(onShow: () => Promise<void>, initialOpen 
   const win = getCurrentWindow();
   await listen('pet:show', onShow);
   await win.onCloseRequested(async (event) => { event.preventDefault(); await win.hide(); });
-  if (onFocusLost) await win.onFocusChanged(({ payload }) => { if (!payload) onFocusLost(); });
+  if (onFocusLost) await win.onFocusChanged(async ({ payload }) => {
+    if (payload) return;
+    try {
+      if (!await win.isFocused()) onFocusLost();
+    } catch {
+      console.warn('창 포커스 상태를 확인하지 못했어요.');
+    }
+  });
   await resizeWindow(initialOpen);
   await win.show();
   await win.setFocus();

@@ -12,7 +12,7 @@ public class SessionController {
     public record Session(String username, Set<String> projects, boolean admin, boolean canCreateProject) {}
 
     public static boolean canCreateProject(Authentication auth, String project) {
-        return auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("CREATE_PROJECT_ALL")
+        return (project == null || AccessContext.from(auth).allowsPath(project)) && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("CREATE_PROJECT_ALL")
                 || (project == null ? a.getAuthority().startsWith("CREATE_PROJECT_")
                                     : a.getAuthority().equals("CREATE_PROJECT_" + project)));
     }

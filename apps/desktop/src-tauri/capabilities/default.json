@@ -20,7 +20,7 @@
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-focus",
-    "window-state:allow-save-window-state",
+    "core:window:allow-is-focused",
     "core:window:allow-set-resizable",
     "core:window:allow-set-min-size"
   ]

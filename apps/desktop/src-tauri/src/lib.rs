@@ -3,7 +3,7 @@ use tauri::{
     tray::TrayIconBuilder,
     Emitter, Manager,
 };
-use tauri_plugin_window_state::StateFlags;
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
@@ -224,6 +224,22 @@ mod tests {
     }
 }
 
+#[tauri::command]
+async fn save_window_geometry(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    require_window(&window, "main")?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    // The plugin holds its cache lock while reading native geometry. Both must run on the UI thread.
+    app.run_on_main_thread(move || {
+        let result = handle.save_window_state(StateFlags::POSITION | StateFlags::SIZE)
+            .map_err(|_| "창 위치를 저장하지 못했어요.".to_string());
+        let _ = sender.send(result);
+    }).map_err(|_| "창 위치 저장을 요청하지 못했어요.")?;
+    tauri::async_runtime::spawn_blocking(move || receiver.recv())
+        .await.map_err(|_| "창 위치 저장 작업이 중단됐어요.")?
+        .map_err(|_| "창 위치 저장 결과를 받지 못했어요.")?
+}
+
 fn show_pet(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -245,7 +261,7 @@ fn toggle_pet(app: &tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .manage(AnswerState::default())
-        .invoke_handler(tauri::generate_handler![set_branding_name, read_branding, open_answer, read_answer, close_answer, save_source, pet_drag_button_down])
+        .invoke_handler(tauri::generate_handler![set_branding_name, read_branding, open_answer, read_answer, close_answer, save_source, save_window_geometry, pet_drag_button_down])
         .plugin(tauri_plugin_global_shortcut::Builder::new()
             .with_handler(|app, _, event| {
                 if event.state() == ShortcutState::Pressed { toggle_pet(app); }

@@ -32,11 +32,18 @@ public class KnowledgeProposalController {
 
     public KnowledgeProposalController(KnowledgeService knowledge) { this.knowledge = knowledge; }
 
-    public record DraftRequest(String instruction, String project, String sourceDocumentId, String sourceVersion) {
+    public record DraftRequest(String instruction, String project, String sourceDocumentId, String sourceVersion, String folderPath) {
+        public DraftRequest(String instruction, String project, String sourceDocumentId, String sourceVersion) {
+            this(instruction, project, sourceDocumentId, sourceVersion, null);
+        }
         @Override public String toString() { return "DraftRequest[content omitted]"; }
     }
     public record SubmitRequest(String project, String sourceDocumentId, String sourceVersion, String title,
-                                String content, JsonNode consent) {
+                                String content, JsonNode consent, String folderPath) {
+        public SubmitRequest(String project, String sourceDocumentId, String sourceVersion, String title,
+                String content, JsonNode consent) {
+            this(project, sourceDocumentId, sourceVersion, title, content, consent, null);
+        }
         @Override public String toString() { return "SubmitRequest[content omitted]"; }
     }
 
@@ -109,12 +116,12 @@ public class KnowledgeProposalController {
 
     @GetMapping("/api/knowledge/proposals")
     public Mono<ResponseEntity<List<KnowledgeProposal>>> own(Authentication auth) {
-        return respond(() -> knowledge.ownProposals(auth.getName()));
+        return respond(() -> knowledge.ownProposals(AccessContext.from(auth)));
     }
 
     @PostMapping(value = "/api/knowledge/proposals/{id}/withdraw", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<KnowledgeProposal>> withdraw(@PathVariable String id, Authentication auth) {
-        return respond(() -> knowledge.withdrawProposal(id, auth.getName()));
+        return respond(() -> knowledge.withdrawProposal(id, AccessContext.from(auth)));
     }
 
     @GetMapping("/api/knowledge/admin/proposals")

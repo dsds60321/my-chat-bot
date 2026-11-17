@@ -70,8 +70,8 @@ class KnowledgeServiceTest {
             assertThat(knowledge.status().healthy()).isTrue();
             var exact = knowledge.search("MCHT 테이블 컬럼 알려줘", Set.of("paye2u"), 5);
             assertThat(exact).isNotEmpty().allMatch(hit -> hit.project().equals("paye2u"));
-            assertThat(exact.getFirst().path()).isEqualTo("paye2u/tables.md");
-            assertThat(exact.getFirst().section()).contains("결제 데이터베이스");
+            assertThat(exact.get(0).path()).isEqualTo("paye2u/tables.md");
+            assertThat(exact.get(0).section()).contains("결제 데이터베이스");
             assertThat(knowledge.search("MCHT", KnowledgeService.SUPPORTED_PROJECTS, 5))
                     .extracting(SearchHit::project).containsExactlyInAnyOrder("paye2u", "syslink");
             assertThat(knowledge.search("가맹점 식별자는 무엇인가요", Set.of("paye2u"), 5)).isNotEmpty();
@@ -110,7 +110,7 @@ class KnowledgeServiceTest {
         try (var knowledge = service()) {
             var hits = knowledge.search("차액정산 재매입하는법 알려줘", Set.of("paye2u"), 4);
             assertThat(hits).isNotEmpty().allMatch(hit -> hit.project().equals("paye2u"));
-            assertThat(hits.getFirst().path()).isEqualTo("paye2u/procedure.md");
+            assertThat(hits.get(0).path()).isEqualTo("paye2u/procedure.md");
         }
     }
 
@@ -132,7 +132,7 @@ class KnowledgeServiceTest {
         Path doc = source("paye2u/업무 자료.md", original);
         Path quarantined = source("paye2u/restricted.md", "api_key = synthetic_sensitive_value_123");
         try (var knowledge = service()) {
-            var hit = knowledge.search("SOURCE_TEST_IDENTIFIER", Set.of("paye2u"), 5).getFirst();
+            var hit = knowledge.search("SOURCE_TEST_IDENTIFIER", Set.of("paye2u"), 5).get(0);
             var snapshot = knowledge.download(hit.documentId(), hit.version(), Set.of("paye2u")).orElseThrow();
             assertThat(snapshot.filename()).isEqualTo("업무 자료.md");
             assertThat(snapshot.bytes()).isEqualTo(Files.readAllBytes(doc));
@@ -149,7 +149,7 @@ class KnowledgeServiceTest {
             Files.writeString(doc, original.replace("alpha", "omega"));
             Files.setLastModifiedTime(doc, mtime);
             assertThat(knowledge.download(hit.documentId(), hit.version(), Set.of("paye2u"))).isEmpty();
-            var updated = knowledge.search("SOURCE_TEST_IDENTIFIER", Set.of("paye2u"), 5).getFirst();
+            var updated = knowledge.search("SOURCE_TEST_IDENTIFIER", Set.of("paye2u"), 5).get(0);
             assertThat(updated.version()).isNotEqualTo(hit.version());
             assertThat(knowledge.download(updated.documentId(), updated.version(), Set.of("paye2u"))).isPresent();
 
@@ -237,10 +237,10 @@ class KnowledgeServiceTest {
     @Test void persistentIndexAndMetadataReopenWithoutReextractingUnchangedSources() throws Exception {
         source("paye2u/good.md", "# Good\nPERSISTED_IDENTIFIER");
         String indexedAt;
-        try (var knowledge = service()) { indexedAt = knowledge.status().documents().getFirst().indexedAt(); }
+        try (var knowledge = service()) { indexedAt = knowledge.status().documents().get(0).indexedAt(); }
         try (var knowledge = service()) {
             assertThat(knowledge.search("PERSISTED_IDENTIFIER", Set.of("paye2u"), 5)).hasSize(1);
-            assertThat(knowledge.status().documents().getFirst().indexedAt()).isEqualTo(indexedAt);
+            assertThat(knowledge.status().documents().get(0).indexedAt()).isEqualTo(indexedAt);
         }
     }
 
@@ -277,7 +277,7 @@ class KnowledgeServiceTest {
         try (var knowledge = service()) {
             var hits = knowledge.search("WBS_SHARED_PROCEDURE", both, 5);
             assertThat(hits).isNotEmpty().allMatch(hit -> hit.path().equals("E2U_WBS.xlsx") && hit.project().equals("paye2u+syslink"));
-            var hit = hits.getFirst();
+            var hit = hits.get(0);
             var original = knowledge.download(hit.documentId(), hit.version(), both).orElseThrow();
             assertThat(original.filename()).isEqualTo("E2U_WBS.xlsx");
             assertThat(original.bytes()).isEqualTo(Files.readAllBytes(workbookPath));

@@ -6,14 +6,15 @@ import thinkingPetUrl from '../../../assets/pet/pet-thinking.png';
 import { PetMotion } from './pet-motion';
 import { streamChat, type Source } from './chat';
 import { LoginSession, AuthenticationError } from './session';
-import { safeSources, renderSources as showSources, type SourceFile } from './sources';
+import { safeSources, renderSources as showSources, sourceFile, type SourceFile } from './sources';
 import { openAnswer, closeAnswer, listenForSourceDownloads } from './popup';
-import { downloadSource, previewSource } from './download';
+import { downloadSource, previewSource, readSourceImage } from './download';
 import { scrollingIndicator, scrollToEnd } from './scroll';
 import { isDrag, mockAnswer, shouldSend, fitPreviewSize, fitToWorkArea, previewArea, resizeFromEdge, type Rect, type ResizeDirection } from './logic';
 import { initializeWindow, native, resizeWindow, showAfterFailure, startDragging, startResizing, watchPetDrag } from './native';
 import { proposalIntent } from './knowledge';
 import { setupKnowledgePanel } from './knowledge-panel';
+import { setupDocumentChoices } from './document-choices';
 
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const pet = element<HTMLButtonElement>('pet');
@@ -33,8 +34,11 @@ let composing = false;
 let compositionEndedAt = 0;
 let request: AbortController | null = null;
 let lastQuestion = '';
+let lastSelection: SourceFile | undefined;
+let documentChoices: Source[] = [];
 const session = new LoginSession();
 let sources: Source[] = [];
+let imagePreview = new AbortController();
 let completed = false;
 let loginRequest: AbortController | null = null;
 const apiUser = element<HTMLInputElement>('api-user');
@@ -59,16 +63,48 @@ function busy(value: boolean): void {
   prompt.disabled = value;
   element<HTMLButtonElement>('logout').disabled = value;
   for (const id of ['open-proposal', 'open-history', 'open-review']) element<HTMLButtonElement>(id).disabled = value;
-  element<HTMLButtonElement>('read-answer').disabled = value || !answer.trim();
+  element<HTMLButtonElement>('read-answer').disabled = value || !answer.trim() || documentChoices.length > 0;
+  element('document-choices').inert = value;
   element('cancel').hidden = !value;
   form.setAttribute('aria-busy', String(value));
 }
+const documentAnswers = setupDocumentChoices(element('document-choices'), {
+  async load(question, file, controller, onEvent) {
+    if (!session.active || session.local) throw new AuthenticationError('다시 로그인해 주세요.');
+    request = controller; busy(true); announce('선택한 문서를 확인하고 있어요.');
+    try {
+      const account = session.auth();
+      await streamChat(question, account.username, account.password, controller.signal, onEvent, file);
+      announce('문서 제목을 눌러 닫거나 다른 문서를 펼쳐 확인하세요.');
+    } catch (error) {
+      if (error instanceof AuthenticationError) { logout(); announce(error.message); }
+      throw error;
+    } finally {
+      if (request === controller) { request = null; busy(false); }
+    }
+  },
+  download(file) { void saveSource(file); },
+  preview(file, image) {
+    void previewSource(file, session, image).catch(error => announce(error instanceof Error ? error.message : '이미지를 열지 못했어요.'));
+  },
+  read: openAnswer,
+});
+function renderDocumentChoices(items: unknown): void {
+  documentChoices = safeSources(items).filter(item => sourceFile(item));
+  documentAnswers.show(lastQuestion, documentChoices);
+  element('document-choices').inert = Boolean(request);
+}
 function renderSources(items: unknown): void {
+  imagePreview.abort();
+  imagePreview = new AbortController();
+  const signal = imagePreview.signal;
   sources = safeSources(items);
   showSources(element<HTMLUListElement>('sources'), sources, file => { void saveSource(file); }, (file, image) => {
     if (request) { announce('답변이 끝난 뒤 이미지를 열어 주세요.'); return; }
-    void previewSource(file, session, image).catch(error => announce(error instanceof Error ? error.message : '이미지를 열지 못했어요.'));
-  });
+    void previewSource(file, session, image, undefined, signal).catch(error => {
+      if (!signal.aborted) announce(error instanceof Error ? error.message : '이미지를 열지 못했어요.');
+    });
+  }, !request);
 }
 async function saveSource(source: SourceFile): Promise<string> {
   if (request) {
@@ -82,7 +118,10 @@ async function saveSource(source: SourceFile): Promise<string> {
   announce(message);
   return message;
 }
-listenForSourceDownloads(saveSource);
+listenForSourceDownloads(saveSource, async file => {
+  if (request) throw new Error('답변이 끝난 뒤 이미지를 열어 주세요.');
+  return readSourceImage(file, session);
+});
 function showSession(): void {
   element('login-form').hidden = session.active;
   element('chat-tools').hidden = !session.active || knowledge.visible;
@@ -99,9 +138,10 @@ function focusInput(): void {
 }
 function logout(): void {
   motion.setThinking(false);
+  imagePreview.abort();
   loginRequest?.abort(); loginRequest = null;
   element('login-error').hidden = true;
-  cancelRequest(); session.logout(); apiPassword.value = ''; answer = ''; sources = []; completed = false; lastQuestion = '';
+  cancelRequest(); renderDocumentChoices([]); lastSelection = undefined; session.logout(); apiPassword.value = ''; answer = ''; sources = []; completed = false; lastQuestion = '';
   knowledge.reset();
   element('question').hidden = true; element('answer-block').hidden = true; element('welcome').hidden = false;
   element('answer').textContent = ''; renderSources([]); prompt.value = ''; element('count').textContent = '0/4000';
@@ -138,7 +178,7 @@ scrollingIndicator(element('login-form'));
 showSession();
 panel.hidden = false; pet.setAttribute('aria-expanded', 'true'); document.body.dataset.state = 'question';
 element('cancel').addEventListener('click', cancelRequest);
-element('retry').addEventListener('click', () => { if (lastQuestion) void executeQuestion(lastQuestion); });
+element('retry').addEventListener('click', () => { if (lastQuestion) void executeQuestion(lastQuestion, lastSelection); });
 
 document.body.classList.toggle('preview', !native);
 
@@ -164,7 +204,7 @@ async function setOpen(value: boolean, focus = true): Promise<void> {
 }
 
 function closeOnOutsideClick(): void {
-  if (open && !resizing && !dragActive) void setOpen(false, false);
+  if (open && !resizing && !dragActive && !knowledge.selectingFile) void setOpen(false, false);
 }
 document.addEventListener('pointerdown', event => {
   const target = event.target;
@@ -240,6 +280,15 @@ prompt.addEventListener('keydown', (event) => {
 form.addEventListener('submit', (event) => {
   event.preventDefault();
   if (!session.active || request || knowledge.visible) return;
+  const selection = documentChoices.length ? /^(\d+)\s*(?:번)?$/.exec(prompt.value.trim()) : null;
+  if (selection) {
+    if (!documentAnswers.toggle(Number(selection[1]) - 1)) {
+      announce('표시된 문서 번호를 선택해 주세요.');
+      return;
+    }
+    prompt.value = ''; element('count').textContent = '0/4000';
+    return;
+  }
   const intent = !session.local && proposalIntent(prompt.value);
   if (intent) {
     knowledge.openProposal(intent);
@@ -248,10 +297,12 @@ form.addEventListener('submit', (event) => {
   }
   void executeQuestion(prompt.value.trim());
 });
-async function executeQuestion(question: string): Promise<void> {
+async function executeQuestion(question: string, selected?: SourceFile): Promise<void> {
   if (request || !session.active) return;
   if (!question || question.length > 4000) { announce('1~4000자 질문을 입력해 주세요.'); prompt.focus(); return; }
   lastQuestion = question;
+  lastSelection = selected;
+  renderDocumentChoices([]);
   const active = new AbortController();
   request = active;
   busy(true);
@@ -282,14 +333,15 @@ async function executeQuestion(question: string): Promise<void> {
           element('answer').textContent = answer;
           if (atBottom) scrollToEnd(conversation);
         }
+        if (event.event === 'candidates') renderDocumentChoices(event.data.items);
         if (event.event === 'sources') renderSources(event.data.items);
-        if (event.event === 'done') element('answer-provider').textContent = event.data.provider === 'mock' ? '서버 Mock 응답' : '서버 답변';
-      });
+        if (event.event === 'done') element('answer-provider').textContent = event.data.provider === 'selection' ? '문서 선택' : event.data.provider === 'mock' ? '서버 Mock 응답' : '서버 답변';
+      }, selected);
     }
-    completed = Boolean(answer.trim());
+    completed = Boolean(answer.trim()) && documentChoices.length === 0;
     prompt.value = '';
     element('count').textContent = '0/4000';
-    announce(session.local ? '로컬 Mock 답변 완료 · 외부 전송 없음' : '서버 답변을 받았어요.');
+    announce(documentChoices.length ? '문서 버튼을 누르거나 번호를 입력해 주세요.' : session.local ? '로컬 Mock 답변 완료 · 외부 전송 없음' : '서버 답변을 받았어요.');
   } catch (error) {
     if (error instanceof AuthenticationError) { logout(); announce(error.message); }
     else if (active.signal.aborted) announce('응답을 취소했어요.');
@@ -298,9 +350,10 @@ async function executeQuestion(question: string): Promise<void> {
       element('retry').hidden = false;
     }
   } finally {
-    if (!completed && answer.trim()) element('answer-provider').textContent = '부분 답변';
+    if (!completed && answer.trim() && !documentChoices.length) element('answer-provider').textContent = '부분 답변';
     request = null;
     busy(false);
+    if (session.active && !session.local) renderSources(sources);
     if (open) focusInput();
   }
 }

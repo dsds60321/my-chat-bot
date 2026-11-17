@@ -47,7 +47,13 @@ public class ApiSecurity {
                 : users(username, password, projects, adminUser, adminPassword, adminProjects, directPublishUsers);
     }
 
-    public record Account(String username, String password, String grade, List<String> projects) {
+    public record Account(String username, String password, String grade, List<String> projects, List<String> excludedPaths) {
+        @org.springframework.boot.context.properties.bind.ConstructorBinding
+        public Account {}
+
+        public Account(String username, String password, String grade, List<String> projects) {
+            this(username, password, grade, projects, List.of());
+        }
         @Override public String toString() { return "Account[configuration omitted]"; }
     }
 
@@ -60,15 +66,24 @@ public class ApiSecurity {
             if (name == null || !name.matches("[^\\p{Cntrl}:\\s]{1,100}") || !names.add(name.toLowerCase(Locale.ROOT))
                     || entry.password() == null || entry.password().isBlank()
                     || entry.password().contains("${")
-                    || !Set.of("admin", "member").contains(entry.grade() == null ? "" : entry.grade())) {
+                    || !Set.of("admin", "user", "member").contains(entry.grade() == null ? "" : entry.grade())) {
                 throw new IllegalArgumentException("pet.api.accounts: 계정명, 비밀번호, grade 또는 계정명 중복을 확인해 주세요.");
             }
             var projects = entry.projects() == null ? List.<String>of() : entry.projects();
             if (projects.stream().anyMatch(project -> !ProjectCatalog.validId(project))) {
                 throw new IllegalArgumentException("pet.api.accounts: projects의 프로젝트 ID를 확인해 주세요.");
             }
+            var excluded = entry.excludedPaths() == null ? List.<String>of() : entry.excludedPaths();
+            if (excluded.stream().anyMatch(path -> !AccessContext.validExcludedPath(path))) {
+                throw new IllegalArgumentException("pet.api.accounts: excluded-paths의 상대 경로를 확인해 주세요.");
+            }
             boolean admin = entry.grade().equals("admin");
-            configured.put(name, new ConfiguredAccount(account(name, entry.password(), admin, admin),
+            var user = account(name, entry.password(), admin, admin);
+            var authorities = new ArrayList<String>();
+            user.getAuthorities().forEach(authority -> authorities.add(authority.getAuthority()));
+            excluded.forEach(path -> authorities.add("DENY_PATH_" + path));
+            user = User.withUserDetails(user).authorities(authorities.toArray(String[]::new)).build();
+            configured.put(name, new ConfiguredAccount(user,
                     String.join(",", projects), admin));
         }
         return name -> Mono.fromCallable(() -> {
@@ -93,12 +108,14 @@ public class ApiSecurity {
         Set<String> available = catalog.projects();
         var granted = configured.isBlank() ? available.stream()
                 : Arrays.stream(configured.split(",")).map(String::strip).filter(available::contains);
-        var projectAuthorities = granted.map(project -> "PROJECT_" + project).toList();
+        var access = AccessContext.from(new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                user, user.getPassword(), user.getAuthorities()));
+        var projectAuthorities = granted.filter(access::allowsPath).map(project -> "PROJECT_" + project).toList();
         if (admin && !unified && projectAuthorities.isEmpty()) return null;
         var authorities = new ArrayList<>(projectAuthorities);
         if (admin && unified) {
             if (configured.isBlank()) authorities.add("CREATE_PROJECT_ALL");
-            else Arrays.stream(configured.split(",")).forEach(project -> authorities.add("CREATE_PROJECT_" + project));
+            else Arrays.stream(configured.split(",")).filter(access::allowsPath).forEach(project -> authorities.add("CREATE_PROJECT_" + project));
         }
         user.getAuthorities().forEach(authority -> authorities.add(authority.getAuthority()));
         return User.withUserDetails(user).authorities(authorities.toArray(String[]::new)).build();

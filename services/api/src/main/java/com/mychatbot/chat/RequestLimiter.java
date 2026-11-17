@@ -29,7 +29,7 @@ public class RequestLimiter {
         if (window.active) throw new AiException("REQUEST_IN_PROGRESS", "진행 중인 요청을 취소하거나 완료한 뒤 다시 시도해 주세요.");
         if (window.count >= maximum) {
             long remaining = WINDOW_NANOS - (now - window.start);
-            int seconds = (int) Math.ceilDiv(remaining, SECOND_NANOS);
+            int seconds = (int) ((remaining + SECOND_NANOS - 1) / SECOND_NANOS);
             throw new AiException("LOCAL_RATE_LIMITED", "미니펫 서버의 분당 요청 한도에 도달했어요.", seconds);
         }
         window.count++;

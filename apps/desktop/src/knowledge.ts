@@ -5,7 +5,7 @@ import { sourceFile, type Attachment } from './sources.ts';
 export type ProposalKind = 'NEW' | 'AMENDMENT';
 export type ProposalState = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN';
 export interface DocumentTarget { documentId: string; version: string; project: string; title: string; path: string }
-interface ProposalScope { project: string; sourceDocumentId?: string; sourceVersion?: string }
+interface ProposalScope { project: string; sourceDocumentId?: string; sourceVersion?: string; folderPath?: string }
 export interface ProposalDraft extends ProposalScope {
   kind: ProposalKind; title: string; content: string; sourceTitle?: string; before?: string;
 }

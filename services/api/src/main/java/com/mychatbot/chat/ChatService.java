@@ -25,8 +25,28 @@ public class ChatService {
         return Mono.fromCallable(() -> {
             if (!SensitiveData.guard(request.question())) throw new AiException("SENSITIVE_INPUT", "비밀정보로 보이는 내용은 전송할 수 없어요. 제거한 뒤 질문해 주세요.");
             return access.projects().isEmpty()
-                    ? List.<SearchHit>of() : search.search(request.question(), access.projects(), 4);
+                    ? List.<SearchHit>of() : search.search(request.question(), access, 20);
         }).subscribeOn(Schedulers.boundedElastic()).flatMapMany(hits -> {
+            if ((request.documentId() == null) != (request.version() == null)) {
+                throw new AiException("SOURCE_SELECTION_CHANGED", "답변에 사용할 문서를 다시 선택해 주세요.");
+            }
+            if (request.documentId() != null) {
+                hits = hits.stream().filter(hit -> request.documentId().equals(hit.documentId())
+                        && request.version().equals(hit.version())).toList();
+                if (hits.isEmpty()) {
+                    throw new AiException("SOURCE_SELECTION_CHANGED", "선택한 문서가 변경되었거나 접근할 수 없어요. 원래 질문으로 다시 검색해 주세요.");
+                }
+            } else {
+                var documents = new java.util.LinkedHashMap<String, SourceMetadata>();
+                for (SearchHit hit : hits) documents.putIfAbsent(hit.documentId(), SourceMetadata.from(hit));
+                if (documents.size() > 1) {
+                    var candidates = documents.values().stream().limit(10).toList();
+                    return Flux.just(new StreamEvent("sources", Map.of("items", List.of())),
+                            new StreamEvent("candidates", Map.of("items", candidates)),
+                            new StreamEvent("delta", new StreamEvent.Delta("관련 문서가 여러 개 있어요. 답변에 사용할 문서를 선택해 주세요. 아래 버튼을 누르거나 번호를 입력하면 선택한 문서만 기준으로 안내합니다.")),
+                            new StreamEvent("done", new StreamEvent.Done(requestId, "selection")));
+                }
+            }
             StringBuilder context = new StringBuilder();
             List<SourceMetadata> included = new ArrayList<>();
             for (SearchHit hit : hits) {

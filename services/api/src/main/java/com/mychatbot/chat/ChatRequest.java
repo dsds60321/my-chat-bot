@@ -5,6 +5,9 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 public record ChatRequest(@NotBlank @Size(max = 4000) String question,
-                          @Pattern(regexp = "auto|work|general") String mode) {
+                          @Pattern(regexp = "auto|work|general") String mode,
+                          @Pattern(regexp = "[a-f0-9]{64}") String documentId,
+                          @Pattern(regexp = "[a-f0-9]{64}") String version) {
+    public ChatRequest(String question, String mode) { this(question, mode, null, null); }
     @Override public String toString() { return "ChatRequest[content omitted]"; }
 }

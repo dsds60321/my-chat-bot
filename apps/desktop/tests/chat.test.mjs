@@ -81,3 +81,14 @@ test('AI and server limits show the retry time only when provided', async t => {
     fetch.mock.restore();
   }
 });
+
+test('selected document identity and version accompany the original question', async t => {
+  const selected = { documentId: 'a'.repeat(64), version: 'b'.repeat(64) };
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.deepEqual(JSON.parse(options.body), { question: '가맹점 이관', ...selected });
+    return new Response('event: done\ndata: {"provider":"test"}\n\n', {
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  });
+  await streamChat('가맹점 이관', 'u', 'p', new AbortController().signal, () => {}, selected);
+});

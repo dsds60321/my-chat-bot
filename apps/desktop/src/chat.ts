@@ -1,5 +1,5 @@
 import { authorization, AuthenticationError } from './session.ts';
-import type { Attachment } from './sources.ts';
+import type { Attachment, SourceFile } from './sources.ts';
 import { apiBaseUrl } from './api.ts';
 
 export interface Source { documentId?: string; version?: string; title: string; path: string; section?: string; row?: number | null; attachments?: Attachment[] }
@@ -55,12 +55,12 @@ function limitMessage(code: unknown, seconds: unknown): string {
 }
 
 export async function streamChat(question: string, username: string, password: string,
-  signal: AbortSignal, onEvent: (event: StreamEvent) => void): Promise<void> {
+  signal: AbortSignal, onEvent: (event: StreamEvent) => void, selected?: SourceFile): Promise<void> {
   const auth = authorization(username, password);
   const response = await fetch(`${apiBaseUrl}/api/chat/stream`, {
     method: 'POST', signal, credentials: 'omit', cache: 'no-store', redirect: 'error',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', Authorization: auth },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, ...(selected ? { documentId: selected.documentId, version: selected.version } : {}) }),
   });
   if (!response.ok) {
     const messages: Record<number, string> = { 400: '질문 입력을 확인해 주세요.',
@@ -97,6 +97,7 @@ export async function streamChat(question: string, username: string, password: s
           if (event.data.code === 'TRUNCATED_RESPONSE' || event.data.code === 'UPSTREAM_TIMEOUT') {
             throw new Error('AI 답변이 중간에 끊겼어요. 다시 시도해 주세요.');
           }
+          if (event.data.code === 'SOURCE_SELECTION_CHANGED') throw new Error('선택한 문서가 변경되었거나 접근할 수 없어요. 원래 질문으로 다시 검색해 주세요.');
           throw new Error('답변 생성에 실패했어요. 잠시 후 다시 시도해 주세요.');
         }
         onEvent(event);

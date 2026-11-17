@@ -154,6 +154,49 @@ textarea { font-size: 14px; }
 @media (prefers-reduced-motion: reduce) { .pet[data-motion] img { animation: none; } .pet-pose { transition: none; } }
 
 .source-attachment { display: grid; justify-items: start; gap: 4px; padding: 6px 0; overflow-wrap: anywhere; }
-.source-attachment img { max-width: min(180px, 100%); border: 1px solid var(--border); border-radius: 6px; cursor: zoom-in; }
+.source-attachment img { max-width: min(360px, 100%); border: 1px solid var(--border); border-radius: 6px; cursor: zoom-in; }
 .source-attachment img:not([src]) { display: none; }
 .source-attachment img.expanded { max-width: 100%; cursor: zoom-out; }
+
+.document-choices { display: grid; gap: 8px; margin: 12px 0; }
+.document-choices[hidden] { display: none; }
+.document-choices details { border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+.document-choices summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+.document-choices summary span { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: normal; }
+
+/* The folder browser stays inside the resizable pet window. */
+.knowledge-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.knowledge-tabs button[aria-current='page'] { color: var(--link); background: #EDF4FF; border-color: #B8CCE8; font-weight: 650; }
+.knowledge-workspace { display: grid; gap: 14px; min-width: 0; align-items: start; }
+.knowledge-workspace > * { min-width: 0; }
+.folder-panel { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: #FFF; }
+.folder-heading { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.folder-heading h3 { font-size: 13px; }
+.folder-panel input { width: 100%; min-width: 0; padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--ink); font: inherit; font-size: 13px; background: white; }
+.folder-tree { list-style: none; padding: 0; margin: 0; overflow: auto; max-height: 260px; }
+.folder-tree > li { min-width: 0; }
+.folder-row { display: flex; gap: 3px; align-items: center; min-height: 36px; padding-left: calc(var(--folder-depth) * 14px); border-radius: 6px; }
+.folder-row.is-selected { background: #EAF2FF; }
+.folder-row .folder-toggle { width: 24px; padding: 0; border: 0; background: transparent; }
+.folder-row .folder-select { min-width: 0; flex: 1; padding: 5px 2px; text-align: left; border: 0; background: transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.folder-icon { display: inline-block; width: 15px; height: 11px; margin-right: 6px; border: 1.3px solid currentColor; border-radius: 2px; vertical-align: -1px; position: relative; }
+.folder-icon::before { content: ''; position: absolute; left: -1.3px; top: -5px; width: 7px; height: 4px; border: 1.3px solid currentColor; border-bottom: 0; border-radius: 2px 2px 0 0; background: white; }
+.folder-row .folder-add { width: 32px; min-height: 32px; padding: 0; background: white; font-size: 18px; }
+.folder-pending { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 0; padding: 6px 2px; font-size: 12px; }
+.folder-badge { padding: 2px 5px; border-radius: 5px; background: #FFF0C2; color: #825200; font-size: 10px; flex-shrink: 0; }
+.folder-create { display: grid; gap: 8px; padding: 12px; border: 1px solid #B8CCE8; border-radius: 8px; background: #F8FBFF; }
+.folder-create label, .folder-create small { font-size: 12px; }
+.folder-path, .folder-breadcrumb { margin: 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.folder-path { color: var(--muted); }
+.folder-breadcrumb { border-radius: 6px; padding: 8px 10px; background: #EDF4FF; color: var(--ink); }
+.folder-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.folder-actions #folder-create-submit { background: var(--ink); color: white; border-color: var(--ink); }
+.folder-note { color: var(--muted); font-size: 11px; padding-top: 8px; border-top: 1px solid var(--border); }
+.folder-request { padding: 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; }
+.folder-request h3 { overflow-wrap: anywhere; }
+.folder-request button { margin: 8px 6px 0 0; }
+@media (min-width: 760px) {
+  .knowledge-workspace:has(.folder-panel:not([hidden])) { grid-template-columns: minmax(240px, 29%) minmax(0, 1fr); }
+  .folder-tree { max-height: 420px; }
+  #knowledge-history { grid-column: 1 / -1; }
+}

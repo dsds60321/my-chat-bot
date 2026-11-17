@@ -52,7 +52,7 @@ export function findSourceFile(sources: Source[], file: SourceFile): SourceFile 
 }
 
 export function appendAttachments(parent: HTMLElement, files: Attachment[],
-    activate: (file: Attachment, preview?: HTMLImageElement) => void, canPreview = true): void {
+    activate: (file: Attachment, preview?: HTMLImageElement) => void, canPreview = true, automatic = false): void {
   for (const file of files) {
     const group = document.createElement('div'); group.className = 'source-attachment';
     if (file.image && canPreview) {
@@ -76,11 +76,15 @@ export function appendAttachments(parent: HTMLElement, files: Attachment[],
       description.textContent = file.description; group.append(description);
     }
     parent.append(group);
+    if (file.image && canPreview && automatic) {
+      const image = group.querySelector('img')!;
+      queueMicrotask(() => { if (image.isConnected) activate(file, image); });
+    }
   }
 }
 
 export function renderSources(list: HTMLUListElement, sources: Source[], download: (file: SourceFile) => void,
-    preview?: (file: Attachment, image: HTMLImageElement) => void): void {
+    preview?: (file: Attachment, image: HTMLImageElement) => void, automatic = true): void {
   const attachments = new Set<string>();
   list.replaceChildren();
   sources.forEach((source, index) => {
@@ -101,11 +105,11 @@ export function renderSources(list: HTMLUListElement, sources: Source[], downloa
       if (attachments.has(file.documentId)) return false;
       attachments.add(file.documentId); return true;
     });
-    appendAttachments(item, files, (attachment, image) => image ? preview?.(attachment, image) : download(attachment), !!preview);
+    appendAttachments(item, files, (attachment, image) => image ? preview?.(attachment, image) : download(attachment), !!preview, automatic);
     list.append(item);
   });
   list.hidden = sources.length === 0;
-  const heading = document.getElementById('sources-heading');
+  const heading = list.id === 'sources' ? document.getElementById('sources-heading') : null;
   if (heading) heading.hidden = list.hidden;
 }
 export interface AnswerSnapshot { answer: string; sources: Source[]; partial?: boolean }
@@ -117,4 +121,19 @@ export function answerSnapshot(value: unknown): AnswerSnapshot {
 }
 export function snapshotText(snapshot: AnswerSnapshot): string {
   return snapshot.answer + (snapshot.sources.length ? '\n\n검색 참고 자료\n' + snapshot.sources.map((s, i) => { const f = formatSource(s, i); return `${f.label}\n${f.detail}`; }).join('\n\n') : '');
+}
+
+export async function displaySourceImage(image: HTMLImageElement, data: unknown): Promise<void> {
+  if (typeof data !== 'string' || data.length > 12 * 1024 * 1024
+      || !/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(data)) {
+    throw new Error('이미지 데이터를 읽지 못했어요.');
+  }
+  if (!image.isConnected) return;
+  try {
+    image.src = data;
+    await image.decode();
+  } catch {
+    image.removeAttribute('src');
+    throw new Error('이미지 미리보기를 표시하지 못했어요.');
+  }
 }

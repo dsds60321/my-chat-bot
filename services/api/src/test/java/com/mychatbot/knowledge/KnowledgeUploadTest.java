@@ -62,7 +62,7 @@ class KnowledgeUploadTest {
                 .exchange().expectStatus().isOk().expectBody(KnowledgeProposal.class).returnResult().getResponseBody();
         assertThat(submitted.state()).isEqualTo(KnowledgeProposal.State.PENDING_APPROVAL);
         assertThat(submitted.attachments()).hasSize(2);
-        var image = submitted.attachments().getFirst();
+        var image = submitted.attachments().get(0);
         String query = "/api/search?q=취소입금확인";
         String source = "/api/sources/" + image.documentId() + "?version=" + image.version();
         String review = proposals + "/" + submitted.id() + "/attachments/" + image.documentId() + "?version=" + image.version();

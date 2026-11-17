@@ -2,6 +2,7 @@ package com.mychatbot.knowledge;
 
 import com.mychatbot.chat.RequestLimiter;
 import com.mychatbot.security.ApiSecurity;
+import com.mychatbot.security.AccessContext;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.Set;
@@ -18,7 +19,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-@WebFluxTest(controllers = SourceDownloadController.class, properties = {"knowledge.root=build/test-fixtures/no-corpus",
+@WebFluxTest(controllers = SourceDownloadController.class, properties = {"spring.config.location=classpath:/application-test-fixture.properties", "pet.api.knowledge.direct-publish-users=developer", "knowledge.root=build/test-fixtures/no-corpus",
         "pet.api.password=temporary-test-password", "pet.api.projects=paye2u"})
 @Import({ApiSecurity.class, com.mychatbot.knowledge.ProjectCatalog.class, RequestLimiter.class})
 class SourceDownloadControllerTest {
@@ -32,7 +33,7 @@ class SourceDownloadControllerTest {
         String version = "2".repeat(64);
         String path = "/api/sources/" + id;
         byte[] bytes = "원본 자료".getBytes(StandardCharsets.UTF_8);
-        when(knowledge.download(id, version, Set.of("paye2u")))
+        when(knowledge.download(id, version, new AccessContext("developer", Set.of("paye2u"), true)))
                 .thenReturn(Optional.of(new KnowledgeService.SourceFile("업무 자료.md", bytes)));
         client.get().uri(path + "?version=" + version).exchange().expectStatus().isUnauthorized();
         verifyNoInteractions(knowledge);
@@ -52,7 +53,7 @@ class SourceDownloadControllerTest {
                     assertThat(attachment.isAttachment()).isTrue();
                     assertThat(attachment.getFilename()).isEqualTo("업무 자료.md");
                 }).expectBody(byte[].class).value(body -> assertThat(body).isEqualTo(bytes));
-        verify(knowledge).download(id, version, Set.of("paye2u"));
+        verify(knowledge).download(id, version, new AccessContext("developer", Set.of("paye2u"), true));
 
         client.get().uri(path).headers(h -> h.setBasicAuth("developer", "temporary-test-password"))
                 .exchange().expectStatus().isNotFound().expectBody().isEmpty();

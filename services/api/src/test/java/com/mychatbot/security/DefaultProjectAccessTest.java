@@ -15,7 +15,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-@WebFluxTest(controllers = {SearchController.class, SessionController.class}, properties = {"pet.api.password=temporary-test-password", "knowledge.root=build/test-fixtures/no-corpus"})
+@WebFluxTest(controllers = {SearchController.class, SessionController.class}, properties = {"spring.config.location=classpath:/application-test-fixture.properties", "pet.api.knowledge.direct-publish-users=developer", "pet.api.password=temporary-test-password", "knowledge.root=build/test-fixtures/no-corpus"})
 @Import({ApiSecurity.class, com.mychatbot.knowledge.ProjectCatalog.class, RequestLimiter.class})
 class DefaultProjectAccessTest {
     @Autowired WebTestClient client;
@@ -28,10 +28,10 @@ class DefaultProjectAccessTest {
         client.get().uri("/api/search?q=MCHT").exchange().expectStatus().isUnauthorized();
         verifyNoInteractions(search);
 
-        when(search.search("MCHT", projects, 10)).thenReturn(List.of());
+        when(search.search("MCHT", new AccessContext("developer", projects, true), 10)).thenReturn(List.of());
         client.get().uri("/api/search?q=MCHT").headers(h -> h.setBasicAuth("developer", "temporary-test-password"))
                 .exchange().expectStatus().isOk().expectBody().json("[]");
-        verify(search).search("MCHT", projects, 10);
+        verify(search).search("MCHT", new AccessContext("developer", projects, true), 10);
         client.get().uri("/api/session").headers(h -> h.setBasicAuth("developer", "temporary-test-password"))
                 .exchange().expectStatus().isOk().expectBody().json("""
                         {"username":"developer","projects":["e2u","paye2u"]}

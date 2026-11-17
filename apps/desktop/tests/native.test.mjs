@@ -14,7 +14,7 @@ test('position save failure does not undo successful popup geometry', async () =
       case 'plugin:window|outer_size': return { width: 128, height: 128 };
       case 'plugin:window|current_monitor': return null;
       case 'plugin:window|available_monitors': return [{ name: 'test', position: { x: 0, y: 0 }, size: { width: 1200, height: 800 }, scaleFactor: 1, workArea: { position: { x: 0, y: 0 }, size: { width: 1200, height: 800 } } }];
-      case 'plugin:window-state|save_window_state': throw new Error('disk write denied');
+      case 'save_window_geometry': throw new Error('disk write denied');
       case 'plugin:window|set_min_size':
       case 'plugin:window|set_resizable':
       case 'plugin:window|set_size':
@@ -49,7 +49,7 @@ test('manual native size survives close/reopen and stays within negative-coordin
       case 'plugin:window|set_position': pos = { x:args.value.position.x, y:args.value.position.y }; return;
       case 'plugin:window|set_resizable': resizable = args.value; return;
       case 'plugin:window|set_min_size':
-      case 'plugin:window-state|save_window_state': return;
+      case 'save_window_geometry': return;
       default: throw new Error(`Unexpected IPC: ${command}`);
     }
   });
@@ -175,4 +175,38 @@ test('unsupported mouse-button tracking pauses motion but can observe resumed mo
     stop(); assert.equal(removed,2);assert.equal(ended,1);
     t.mock.timers.tick(1000);assert.equal(paused,1);
   } finally {clearMocks();delete globalThis.window;delete globalThis.isTauri;}
+});
+
+test('a delayed native blur after a file dialog closes does not collapse the restored window', async t => {
+  const { Window } = await import('@tauri-apps/api/window');
+  globalThis.window = { crypto: globalThis.crypto }; globalThis.isTauri = true; mockWindows('main');
+  let focusChanged; let currentlyFocused = true; let closed = 0;
+  t.mock.method(Window.prototype, 'onFocusChanged', async handler => { focusChanged = handler; return () => {}; });
+  t.mock.method(Window.prototype, 'isFocused', async () => currentlyFocused);
+  t.mock.method(Window.prototype, 'onCloseRequested', async () => () => {});
+  mockIPC(command => {
+    switch (command) {
+      case 'plugin:window|outer_position': return { x: 100, y: 100 };
+      case 'plugin:window|outer_size': return { width: 128, height: 128 };
+      case 'plugin:window|current_monitor': return { position: { x: 0, y: 0 }, size: { width: 1600, height: 1000 }, workArea: { position: { x: 0, y: 24 }, size: { width: 1600, height: 976 } }, scaleFactor: 1 };
+      case 'plugin:event|listen': return 1;
+      case 'plugin:window|set_min_size':
+      case 'plugin:window|set_resizable':
+      case 'plugin:window|set_size':
+      case 'plugin:window|set_position':
+      case 'plugin:window|show':
+      case 'plugin:window|set_focus':
+      case 'save_window_geometry': return;
+      default: throw new Error(`Unexpected IPC: ${command}`);
+    }
+  });
+  try {
+    const { initializeWindow } = await import('../src/native.ts');
+    await initializeWindow(async () => {}, true, () => { closed++; });
+    await focusChanged({ payload: false });
+    assert.equal(closed, 0);
+    currentlyFocused = false;
+    await focusChanged({ payload: false });
+    assert.equal(closed, 1);
+  } finally { clearMocks(); delete globalThis.window; delete globalThis.isTauri; }
 });

@@ -24,7 +24,7 @@ public class SearchController {
         if (!SensitiveData.guard(q)) throw new AiException("SENSITIVE_INPUT", "검색어에서 비밀정보를 제거해 주세요.");
         AccessContext access = AccessContext.from(authentication);
         RequestLimiter.Lease lease = limiter.acquire(access.userId());
-        return Mono.fromCallable(() -> search.search(q, access.projects(), 10))
+        return Mono.fromCallable(() -> search.search(q, access, 10))
                 .subscribeOn(Schedulers.boundedElastic()).doFinally(signal -> lease.close());
     }
 }

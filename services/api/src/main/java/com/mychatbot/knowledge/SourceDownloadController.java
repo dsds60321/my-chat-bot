@@ -32,7 +32,7 @@ public class SourceDownloadController {
             @RequestParam(required = false) String version, Authentication authentication) {
         AccessContext access = AccessContext.from(authentication);
         return Mono.using(() -> limiter.acquire(access.userId()),
-                lease -> Mono.fromCallable(() -> fileResponse(knowledge.download(documentId, version, access.projects())))
+                lease -> Mono.fromCallable(() -> fileResponse(knowledge.download(documentId, version, access)))
                         .subscribeOn(Schedulers.boundedElastic()),
                 RequestLimiter.Lease::close);
     }

@@ -36,6 +36,8 @@ import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.custom.CustomAnalyzer;
 import org.apache.lucene.analysis.ko.KoreanAnalyzer;
+import org.apache.lucene.analysis.ko.POS;
+import org.apache.lucene.analysis.ko.tokenattributes.PartOfSpeechAttribute;
 import org.apache.lucene.analysis.miscellaneous.PerFieldAnalyzerWrapper;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.document.Document;
@@ -50,7 +52,8 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.BoostQuery;
-import org.apache.lucene.search.ConstantScoreQuery;
+import org.apache.lucene.search.DisjunctionMaxQuery;
+import org.apache.lucene.search.Query;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.PhraseQuery;
 import org.apache.lucene.search.TermQuery;
@@ -66,14 +69,14 @@ import org.springframework.stereotype.Service;
 @Service
 @EnableScheduling
 public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
-    private static final String POLICY = "knowledge-policy-v9";
+    private static final String POLICY = "knowledge-policy-v14-published-copies";
     private static final Logger LOG = LoggerFactory.getLogger(KnowledgeService.class);
     private static final Set<String> TYPES = Set.of("md", "txt", "text", "java", "xml", "json", "sql", "xlsx", "xls", "docx", "pdf");
     public static final Set<String> SUPPORTED_PROJECTS = Set.of("paye2u", "syslink", "operations", "notes", "common");
     private static final String SHARED_WORKBOOK = "E2U_WBS.xlsx";
     private static final String SHARED_WORKBOOK_PROJECT = "paye2u+syslink";
     private static final Set<String> SHARED_WORKBOOK_GRANTS = Set.of("paye2u", "syslink");
-    private static final Set<String> STOP = Set.of("알려", "알려줘", "알려주세요", "주세요", "문서", "관련", "대한", "대해", "어떤", "무엇", "어떻게", "어디", "있어", "있나요", "있", "하", "해", "줘", "수", "것", "좀", "내용", "설명", "확인", "찾아", "방법", "요", "나", "때", "가요", "테이블", "컬럼");
+    private static final Set<String> STOP = Set.of("알려", "알려줘", "알려주세요", "주세요", "문서", "관련", "대한", "대해", "어떤", "무엇", "어떻게", "어디", "있어", "있나요", "있", "하", "해", "줘", "수", "것", "좀", "내용", "설명", "확인", "찾아", "방법", "요", "나", "때", "가요", "테이블", "컬럼", "알리", "법", "순서");
     private static final Pattern TOKEN = Pattern.compile("[\\p{L}\\p{N}_./:$-]+");
     private static final Pattern CONTENT_ID = Pattern.compile("[0-9a-f]{64}");
     private static final int MAX_PROPOSALS = 1000;
@@ -81,7 +84,9 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
     private static final String PROPOSAL_PATH_PREFIX = ".approved/";
     private final Path root;
     private final Path indexPath;
+    private final Path storePath;
     private final ProjectCatalog projectCatalog;
+    private final PublishedKnowledge published;
     private final ObjectMapper json = new ObjectMapper();
     private final DocumentExtractor extractor = new DocumentExtractor();
     private final Map<String, Entry> entries = new LinkedHashMap<>();
@@ -106,20 +111,32 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
 
     @Autowired
     public KnowledgeService(@Value("${knowledge.root:../../data/knowledge}") String root,
-                            @Value("${knowledge.index-path:../../.local/knowledge-index}") String indexPath) {
-        this(Path.of(root), Path.of(indexPath));
+                            @Value("${knowledge.index-path:../../.local/knowledge-index}") String indexPath,
+                            @Value("${knowledge.store-path:}") String storePath) {
+        this(Path.of(root), Path.of(indexPath), storePath.isBlank()
+                ? Path.of(root).toAbsolutePath().resolveSibling("knowledge-submissions") : Path.of(storePath));
     }
 
     public KnowledgeService(Path root, Path indexPath) {
+        this(root, indexPath, root.toAbsolutePath().resolveSibling("knowledge-submissions"));
+    }
+
+    public KnowledgeService(Path root, Path indexPath, Path storePath) {
         this.root = root.toAbsolutePath().normalize();
         this.indexPath = indexPath.toAbsolutePath().normalize();
+        this.storePath = storePath.toAbsolutePath().normalize();
         this.projectCatalog = new ProjectCatalog(this.root.toString());
+        this.published = new PublishedKnowledge(this.root, this.storePath);
         syncNow();
     }
 
     private void initialize() throws Exception {
         if (writer != null) return;
         if (indexPath.startsWith(root) || root.startsWith(indexPath)) throw new IOException("index-source-overlap");
+        if (storePath.startsWith(root) || root.startsWith(storePath)
+                || storePath.startsWith(indexPath) || indexPath.startsWith(storePath)) {
+            throw new IOException("proposal-store-overlap");
+        }
         rejectSymlinkParents(root);
         rejectSymlinkParents(indexPath);
         Files.createDirectories(root);
@@ -127,8 +144,8 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
         Analyzer exact = CustomAnalyzer.builder().withTokenizer("pattern", "pattern", "[^\\p{L}\\p{N}_./:$-]+")
             .addTokenFilter("lowercase").build();
         analyzer = new PerFieldAnalyzerWrapper(new KoreanAnalyzer(), Map.of("exact", exact));
-        rejectSymlinkParents(indexPath.resolve("lucene"));
-        directory = FSDirectory.open(indexPath.resolve("lucene"));
+        rejectSymlinkParents(indexPath.resolve("lucene-9"));
+        directory = FSDirectory.open(indexPath.resolve("lucene-9"));
         boolean existingIndex = DirectoryReader.indexExists(directory);
         writer = new IndexWriter(directory, new IndexWriterConfig(analyzer));
         writer.deleteDocuments(new Term("approved-proposal", "true"));
@@ -153,9 +170,12 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
             initialize();
             rejectSymlinkParents(root);
             if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) throw new IOException("source-unavailable");
+            loadProposals();
+            published.load();
             List<Path> paths;
             try (var walk = Files.walk(root)) {
                 paths = walk.filter(path -> !Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS))
+                    .filter(path -> !published.owns(root.relativize(path).toString().replace('\\', '/')))
                     .sorted().limit(10001).toList();
             }
             if (paths.size() > 10000) throw new IOException("source-file-limit");
@@ -172,7 +192,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
                     entries.put(entry.path(), inactive(entry, "DELETED", "source-missing"));
                 }
             }
-            loadProposals();
+            syncPublishedProposals();
             syncApprovedProposals();
             writer.commit();
             healthy = true;
@@ -225,7 +245,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
             }
             String category = category(relative, extracted.text());
             List<Document> documents = indexDocuments(id, relative, extracted.title(), project, category, type,
-                    version, modified, extracted.chunks(), false);
+                    version, modified, extracted.chunks(), false, relative);
             writer.updateDocuments(new Term("documentId", id), documents);
             String summary = extracted.text().lines().filter(line -> !line.isBlank() && !line.startsWith("#"))
                 .findFirst().orElse("");
@@ -242,7 +262,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
     }
 
     private static List<Document> indexDocuments(String id, String relative, String title, String project, String category,
-            String type, String version, long modified, List<DocumentExtractor.Chunk> chunks, boolean approvedProposal) {
+            String type, String version, long modified, List<DocumentExtractor.Chunk> chunks, boolean approvedProposal, String accessPath) {
         List<Document> documents = new ArrayList<>();
         int number = 0;
         for (var chunk : chunks) {
@@ -253,12 +273,17 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
             add(doc, "version", version); add(doc, "chunkId", id + ":" + number++);
             add(doc, "section", chunk.section());
             add(doc, "acl", (approvedProposal ? "APPROVED:" : "OFFICIAL:") + project);
+            add(doc, "access-path", accessPath);
             add(doc, "indexedAt", Instant.now().toString());
             add(doc, "modifiedAt", Long.toString(modified));
             if (approvedProposal) add(doc, "approved-proposal", "true");
             if (chunk.row() != null) doc.add(new StoredField("row", chunk.row()));
             doc.add(new StoredField("text", chunk.text()));
-            String searchable = relative + "\n" + title + "\n" + chunk.section() + "\n" + chunk.text();
+            String searchable = title + "\n" + chunk.section() + "\n" + chunk.text();
+            doc.add(new TextField("title-text", title, Field.Store.NO));
+            doc.add(new TextField("section-text", chunk.section(), Field.Store.NO));
+            add(doc, "filename", relative.substring(relative.lastIndexOf('/') + 1).toLowerCase(Locale.ROOT));
+            add(doc, "file-path", relative.toLowerCase(Locale.ROOT));
             doc.add(new TextField("korean", searchable, Field.Store.NO));
             doc.add(new TextField("exact", searchable, Field.Store.NO));
             documents.add(doc);
@@ -267,7 +292,13 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
     }
 
     @Override
-    public synchronized List<SearchHit> search(String question, Set<String> projects, int limit) {
+    public List<SearchHit> search(String question, Set<String> projects, int limit) {
+        return search(question, new AccessContext("", projects), limit);
+    }
+
+    @Override
+    public synchronized List<SearchHit> search(String question, AccessContext access, int limit) {
+        Set<String> projects = access.projects();
         if (question == null || question.isBlank() || question.length() > 4000 || projects == null || projects.isEmpty()) return List.of();
         // A request revalidates source availability and versions, so missed filesystem events cannot expose stale data.
         syncNow();
@@ -282,67 +313,30 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
                 acl.add(new TermQuery(new Term("project", SHARED_WORKBOOK_PROJECT)), BooleanClause.Occur.SHOULD);
             }
             acl.setMinimumNumberShouldMatch(1);
-            BooleanQuery.Builder technical = new BooleanQuery.Builder();
-            int technicalCount = 0;
-            var identifiers = TOKEN.matcher(question);
-            while (identifiers.find() && technicalCount < 16) {
-                String value = identifiers.group();
-                if (value.contains("_") || value.contains("/") || value.matches("[A-Z][A-Z0-9_]{2,}") || value.matches("[a-z]+[A-Z][A-Za-z0-9]*")) {
-                    technical.add(new TermQuery(new Term("exact", value.toLowerCase(Locale.ROOT))), BooleanClause.Occur.SHOULD);
-                    technicalCount++;
-                }
-            }
-            BooleanQuery.Builder terms = new BooleanQuery.Builder();
-            int count = 0;
-            var matcher = TOKEN.matcher(question.toLowerCase(Locale.ROOT));
-            while (matcher.find() && count < 32) {
-                String token = matcher.group();
-                if (token.length() < 2 || STOP.contains(token)) continue;
-                terms.add(new BoostQuery(new TermQuery(new Term("exact", token)), 4), BooleanClause.Occur.SHOULD);
-                count++;
-            }
-            String analyzedQuestion = TOKEN.matcher(question).results().map(MatchResult::group)
-                    .filter(token -> !STOP.contains(token.toLowerCase(Locale.ROOT)))
-                    .collect(Collectors.joining(" "));
-            Set<String> koreanTerms = new LinkedHashSet<>();
-            try (TokenStream stream = analyzer.tokenStream("korean", analyzedQuestion)) {
-                CharTermAttribute term = stream.addAttribute(CharTermAttribute.class);
-                stream.reset();
-                while (stream.incrementToken() && count < 64) {
-                    String token = term.toString();
-                    if (token.length() < 2 || STOP.contains(token)) continue;
-                    terms.add(new TermQuery(new Term("korean", token)), BooleanClause.Occur.SHOULD);
-                    if (token.codePoints().allMatch(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.HANGUL)) {
-                        koreanTerms.add(token);
-                    }
-                    count++;
-                }
-                stream.end();
-            }
-            if (count == 0) return List.of();
-            terms.setMinimumNumberShouldMatch(1);
+            Query relevance = relevanceQuery(question);
+            if (relevance == null) return List.of();
             var queryBuilder = new BooleanQuery.Builder().add(acl.build(), BooleanClause.Occur.FILTER)
-                .add(terms.build(), BooleanClause.Occur.MUST);
-            if (technicalCount > 0) queryBuilder.add(technical.setMinimumNumberShouldMatch(1).build(), BooleanClause.Occur.MUST);
-            addKoreanRelevance(queryBuilder, koreanTerms);
-            queryBuilder.add(new BoostQuery(new ConstantScoreQuery(new TermQuery(new Term("approved-proposal", "true"))), 2),
-                    BooleanClause.Occur.SHOULD);
+                    .add(relevance, BooleanClause.Occur.MUST);
+            for (String excluded : access.excludedPaths()) {
+                queryBuilder.add(new TermQuery(new Term("access-path", excluded)), BooleanClause.Occur.MUST_NOT);
+                queryBuilder.add(new org.apache.lucene.search.PrefixQuery(new Term("access-path", excluded + "/")), BooleanClause.Occur.MUST_NOT);
+            }
             var query = queryBuilder.build();
             List<SearchHit> hits = new ArrayList<>();
             try (DirectoryReader reader = DirectoryReader.open(writer)) {
                 IndexSearcher searcher = new IndexSearcher(reader);
-                for (var match : searcher.search(query, Math.clamp(limit, 1, 20) * 4).scoreDocs) {
+                for (var match : searcher.search(query, Math.max(1, Math.min(limit, 20)) * 4).scoreDocs) {
                     Document doc = searcher.storedFields().document(match.doc);
                     boolean proposal = "true".equals(doc.get("approved-proposal"));
                     Entry current = (proposal ? approvedEntries : entries).get(doc.get("path"));
                     if (current == null || !current.state().equals("ACTIVE") || !current.version().equals(doc.get("version"))
-                            || (proposal ? !mayReadApproved(current, allowed)
-                                         : !hasProjectAccess(current, allowed) || !currentlyReadable(current))) continue;
+                            || (proposal ? !mayReadApproved(current, access)
+                                         : !hasProjectAccess(current, allowed) || !access.allowsPath(current.path()) || !currentlyReadable(current))) continue;
                     hits.add(new SearchHit(doc.get("documentId"), doc.get("path"), doc.get("title"), current.project(),
                         doc.get("category"), doc.get("type"), doc.get("version"), doc.get("chunkId"), doc.get("section"),
                         doc.getField("row") == null ? null : doc.getField("row").numericValue().intValue(), doc.get("text"), match.score, proposal,
                         proposal ? proposals.get(proposalId(current.path())).attachments() : List.of()));
-                    if (hits.size() >= Math.clamp(limit, 1, 20)) break;
+                    if (hits.size() >= Math.max(1, Math.min(limit, 20))) break;
                 }
             }
             return List.copyOf(hits);
@@ -354,24 +348,80 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
         }
     }
 
-    private static void addKoreanRelevance(BooleanQuery.Builder query, Set<String> tokens) {
-        if (tokens.size() < 2) return;
-        for (int minimum = 2; minimum <= Math.min(3, tokens.size()); minimum++) {
-            BooleanQuery.Builder cooccurrence = new BooleanQuery.Builder().setMinimumNumberShouldMatch(minimum);
-            for (String token : tokens) {
-                cooccurrence.add(new TermQuery(new Term("korean", token)), BooleanClause.Occur.SHOULD);
+    private Query relevanceQuery(String question) throws IOException {
+        Set<String> exact = new LinkedHashSet<>();
+        Set<String> filenames = new LinkedHashSet<>();
+        StringBuilder natural = new StringBuilder();
+        var words = TOKEN.matcher(question);
+        int wordCount = 0;
+        while (words.find() && wordCount++ < 64) {
+            String word = words.group();
+            String lower = word.toLowerCase(Locale.ROOT);
+            if (STOP.contains(lower)) continue;
+            if (word.contains(".") && TYPES.contains(DocumentExtractor.extension(word))) {
+                filenames.add(lower);
+            } else if (word.contains("_") || word.contains("/") || word.matches("[A-Z][A-Z0-9_]{2,}")
+                    || word.matches("[a-z]+[A-Z][A-Za-z0-9]*")) {
+                exact.add(lower);
+            } else natural.append(word).append(' ');
+        }
+        Set<String> terms = new LinkedHashSet<>();
+        try (TokenStream stream = analyzer.tokenStream("korean", natural.toString().strip())) {
+            var term = stream.addAttribute(CharTermAttribute.class);
+            var pos = stream.addAttribute(PartOfSpeechAttribute.class);
+            stream.reset();
+            while (stream.incrementToken() && terms.size() < 64) {
+                String value = term.toString();
+                POS.Tag tag = pos.getLeftPOS();
+                boolean noun = tag == POS.Tag.NNG || tag == POS.Tag.NNP;
+                boolean useful = noun || tag == POS.Tag.SL || tag == POS.Tag.SN || tag == POS.Tag.VV;
+                if (!STOP.contains(value) && useful && (noun || value.length() >= 2 || tag == POS.Tag.SN)) {
+                    terms.add(value);
+                }
             }
-            query.add(new BoostQuery(new ConstantScoreQuery(cooccurrence.build()), 12), BooleanClause.Occur.SHOULD);
+            stream.end();
         }
-        if (tokens.size() <= 4) {
-            var phrase = new PhraseQuery(2, "korean", tokens.toArray(String[]::new));
-            query.add(new BoostQuery(new ConstantScoreQuery(phrase), 12), BooleanClause.Occur.SHOULD);
+        terms.removeAll(exact);
+        int count = terms.size() + exact.size() + filenames.size();
+        if (count == 0) return null;
+        BooleanQuery.Builder matches = new BooleanQuery.Builder();
+        BooleanQuery.Builder required = new BooleanQuery.Builder();
+        for (String value : terms) {
+            // Count each term once even when it matches several fields.
+            var fields = List.of(
+                    new BoostQuery(new TermQuery(new Term("exact", value)), 4),
+                    new TermQuery(new Term("korean", value)),
+                    new BoostQuery(new TermQuery(new Term("title-text", value)), 3),
+                    new BoostQuery(new TermQuery(new Term("section-text", value)), 2));
+            matches.add(new DisjunctionMaxQuery(fields, 1), BooleanClause.Occur.SHOULD);
         }
+        for (String value : exact) {
+            var identifier = new TermQuery(new Term("exact", value));
+            matches.add(identifier, BooleanClause.Occur.SHOULD);
+            required.add(identifier, BooleanClause.Occur.MUST);
+        }
+        for (String value : filenames) {
+            var filename = new DisjunctionMaxQuery(List.of(
+                    new TermQuery(new Term("filename", value)),
+                    new TermQuery(new Term("file-path", value)),
+                    new TermQuery(new Term("exact", value))), 0);
+            matches.add(filename, BooleanClause.Occur.SHOULD);
+            required.add(filename, BooleanClause.Occur.MUST);
+        }
+        // Require all terms in short queries, and 80 percent in longer descriptions.
+        matches.setMinimumNumberShouldMatch(count <= 4 ? count : (count * 4 + 4) / 5);
+        required.add(matches.build(), BooleanClause.Occur.MUST);
+        if (terms.size() >= 2 && terms.size() <= 8) {
+            required.add(new BoostQuery(new PhraseQuery(2, "korean", terms.toArray(String[]::new)), 3),
+                    BooleanClause.Occur.SHOULD);
+        }
+        return required.build();
     }
 
     public synchronized KnowledgeProposal.Draft draft(KnowledgeProposalController.DraftRequest request, AccessContext author) {
         String instruction = proposalText(request.instruction(), 4000);
         Entry source = proposalTarget(request.project(), request.sourceDocumentId(), request.sourceVersion(), author);
+        String folderPath = proposalFolder(request.project(), request.folderPath(), source, author);
         String content = instruction.replaceFirst("(?:[.。]?[ \\t]*)(?:추가|반영|수정|등록|보완)\\s*해\\s*(?:줘|주세요)[.!。]?$", "").strip();
         if (content.isEmpty()) content = instruction;
         String title = source == null ? content.lines().findFirst().orElse("새 지식").strip()
@@ -380,7 +430,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
         String before = source == null ? null : sourceExcerpt(source, content);
         return new KnowledgeProposal.Draft(source == null ? Kind.NEW : Kind.AMENDMENT, request.project(),
                 source == null ? null : source.documentId(), source == null ? null : source.version(),
-                source == null ? null : source.title(), before, title, content);
+                source == null ? null : source.title(), before, title, content, folderPath);
     }
 
     public void createProject(String id) {
@@ -401,6 +451,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
         String content = proposalText(request.content(), 4000);
         validateProposalContent(title, content);
         Entry source = proposalTarget(request.project(), request.sourceDocumentId(), request.sourceVersion(), author);
+        String folderPath = proposalFolder(request.project(), request.folderPath(), source, author);
         if (proposals.size() >= MAX_PROPOSALS) throw new AiException("PROPOSAL_UNAVAILABLE", "제안 저장 공간의 한도에 도달했어요.");
         if (uploads.size() > 3) throw new AiException("PROPOSAL_INVALID", "파일은 최대 3개까지 올릴 수 있어요.");
         String now = Instant.now().toString();
@@ -411,7 +462,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
             KnowledgeProposal proposal = new KnowledgeProposal(id, source == null ? Kind.NEW : Kind.AMENDMENT,
                     request.project(), source == null ? null : source.documentId(), source == null ? null : source.version(),
                     source == null ? null : source.title(), title, content, author.userId(),
-                    author.directPublish() ? State.APPROVED : State.PENDING_APPROVAL, now, now, attachments);
+                    author.directPublish() ? State.APPROVED : State.PENDING_APPROVAL, now, now, attachments, folderPath);
             if (author.directPublish()) validateApproval(proposal, source);
             saveProposal(proposal);
             return proposal;
@@ -426,7 +477,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
 
     private Path attachmentPath(String id) throws IOException {
         if (!CONTENT_ID.matcher(id).matches()) throw new IOException("attachment-id");
-        Path path = indexPath.resolve("attachments").resolve(id);
+        Path path = storePath.resolve("attachments").resolve(id);
         rejectSymlinkParents(path);
         return path;
     }
@@ -476,7 +527,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
             AccessContext access, boolean admin) {
         requireProposals();
         KnowledgeProposal proposal = proposals.get(proposalId);
-        if (proposal == null || !hasProposalScope(proposal.project(), access.projects())
+        if (proposal == null || !mayAccessProposal(proposal, access)
                 || (!proposal.author().equals(access.userId()) && !(admin && proposal.state() == State.PENDING_APPROVAL))) {
             return Optional.empty();
         }
@@ -502,11 +553,22 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
                 .sorted(Comparator.comparing(KnowledgeProposal::createdAt).reversed()).toList();
     }
 
+    public synchronized List<KnowledgeProposal> ownProposals(AccessContext access) {
+        return ownProposals(access.userId()).stream().filter(proposal -> exclusionsAllowProposal(proposal, access)).toList();
+    }
+
     public synchronized List<KnowledgeProposal> pendingProposals(AccessContext admin) {
         requireProposals();
         return proposals.values().stream().filter(p -> p.state() == State.PENDING_APPROVAL
-                        && hasProposalScope(p.project(), admin.projects()))
+                        && mayAccessProposal(p, admin))
                 .sorted(Comparator.comparing(KnowledgeProposal::createdAt)).toList();
+    }
+
+    public synchronized KnowledgeProposal withdrawProposal(String id, AccessContext access) {
+        requireProposals();
+        KnowledgeProposal proposal = proposals.get(id);
+        if (proposal == null || !exclusionsAllowProposal(proposal, access)) throw proposalNotFound();
+        return withdrawProposal(id, access.userId());
     }
 
     public synchronized KnowledgeProposal withdrawProposal(String id, String author) {
@@ -522,7 +584,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
     public synchronized KnowledgeProposal reviewProposal(String id, AccessContext admin, State next) {
         requireProposals();
         KnowledgeProposal proposal = proposals.get(id);
-        if (proposal == null || !hasProposalScope(proposal.project(), admin.projects())) throw proposalNotFound();
+        if (proposal == null || !mayAccessProposal(proposal, admin)) throw proposalNotFound();
         if (proposal.state() != State.PENDING_APPROVAL) throw proposalConflict();
         if (proposal.author().equals(admin.userId())) {
             throw new AiException("PROPOSAL_FORBIDDEN", "본인이 제출한 제안은 검토할 수 없어요.");
@@ -530,6 +592,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
         if (next == State.APPROVED) {
             validateProposalContent(proposal.title(), proposal.content());
             Entry source = proposalTarget(proposal.project(), proposal.sourceDocumentId(), proposal.sourceVersion(), admin);
+            proposalFolder(proposal.project(), proposal.folderPath(), source, admin);
             validateApproval(proposal, source);
         }
         KnowledgeProposal reviewed = proposal.withState(next, Instant.now().toString());
@@ -567,18 +630,35 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
     private Entry proposalTarget(String project, String sourceId, String version, AccessContext access) {
         if (project == null || project.isBlank()) throw new AiException("PROPOSAL_INVALID", "프로젝트를 선택해 주세요.");
         if (sourceId == null && version == null) {
-            if (!hasProposalScope(project, access.projects()) || SHARED_WORKBOOK_PROJECT.equals(project)) throw proposalNotFound();
+            if (!hasProposalScope(project, access.projects()) || !access.allowsPath(project) || SHARED_WORKBOOK_PROJECT.equals(project)) throw proposalNotFound();
             return null;
         }
         if (sourceId == null || version == null || !CONTENT_ID.matcher(sourceId).matches()
                 || !CONTENT_ID.matcher(version).matches()) throw new AiException("PROPOSAL_INVALID", "원본 문서와 버전을 선택해 주세요.");
         if (!healthy) throw new AiException("PROPOSAL_UNAVAILABLE", "원본 색인을 읽을 수 없어요.");
         Entry source = officialSource(sourceId);
-        if (source == null || !project.equals(source.project()) || !hasProjectAccess(source, access.projects())) {
+        if (source == null || !project.equals(source.project()) || !hasProjectAccess(source, access.projects()) || !access.allowsPath(source.path())) {
             throw proposalNotFound();
         }
         if (!"ACTIVE".equals(source.state()) || !version.equals(source.version()) || !currentlyReadable(source)) throw proposalConflict();
         return source;
+    }
+
+    private String proposalFolder(String project, String requested, Entry source, AccessContext access) {
+        if (source != null) {
+            String parent = source.path().contains("/") ? source.path().substring(0, source.path().lastIndexOf('/')) : project;
+            if (requested != null && !requested.equals(parent)) throw proposalNotFound();
+            return parent;
+        }
+        String folder = requested == null ? project : requested;
+        if (!KnowledgeFolders.validPath(folder) || !(folder.equals(project) || folder.startsWith(project + "/"))
+                || !access.projects().contains(project) || !access.allowsPath(folder)) throw proposalNotFound();
+        try {
+            Path path = root.resolve(folder);
+            rejectSymlinkParents(path);
+            if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) throw proposalNotFound();
+        } catch (IOException ex) { throw proposalNotFound(); }
+        return folder;
     }
 
     private Entry officialSource(String documentId) {
@@ -623,51 +703,127 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
         }
     }
 
-    private void loadProposals() throws IOException {
-        if (proposalsLoaded) return;
-        Path file = indexPath.resolve(PROPOSALS_FILE);
+    private Map<String, KnowledgeProposal> readProposals(Path file) throws IOException {
         rejectSymlinkParents(file);
-        if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
-            if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) > 32 * 1024 * 1024) {
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) > 32 * 1024 * 1024) {
+            throw new IOException("proposal-store-invalid");
+        }
+        List<KnowledgeProposal> saved = json.readValue(file.toFile(), new TypeReference<List<KnowledgeProposal>>() {});
+        Map<String, KnowledgeProposal> loaded = new LinkedHashMap<>();
+        if (saved == null) throw new IOException("proposal-store-invalid");
+        for (KnowledgeProposal proposal : saved) {
+            if (proposal == null || !UUID.fromString(proposal.id()).toString().equals(proposal.id())
+                    || (proposal.kind() == Kind.NEW && (!KnowledgeFolders.validPath(proposal.folderPath())
+                        || !(proposal.folderPath().equals(proposal.project()) || proposal.folderPath().startsWith(proposal.project() + "/"))))
+                    || loaded.put(proposal.id(), proposal) != null) {
                 throw new IOException("proposal-store-invalid");
             }
-            List<KnowledgeProposal> saved = json.readValue(file.toFile(), new TypeReference<List<KnowledgeProposal>>() {});
-            Map<String, KnowledgeProposal> loaded = new LinkedHashMap<>();
-            for (KnowledgeProposal proposal : saved) {
-                if (!UUID.fromString(proposal.id()).toString().equals(proposal.id()) || loaded.put(proposal.id(), proposal) != null) {
-                    throw new IOException("proposal-store-invalid");
-                }
-            }
-            proposals.putAll(loaded);
         }
+        return loaded;
+    }
+
+    private void loadProposals() throws IOException {
+        if (proposalsLoaded) return;
+        rejectSymlinkParents(storePath);
+        Files.createDirectories(storePath);
+        Path file = storePath.resolve(PROPOSALS_FILE);
+        Path initialized = storePath.resolve(".initialized");
+        rejectSymlinkParents(file);
+        rejectSymlinkParents(initialized);
+        if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
+            if (Files.exists(initialized, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("proposal-original-missing");
+            }
+            Path legacy = indexPath.resolve(PROPOSALS_FILE);
+            var migrated = Files.exists(legacy, LinkOption.NOFOLLOW_LINKS) ? readProposals(legacy) : Map.<String, KnowledgeProposal>of();
+            for (KnowledgeProposal proposal : migrated.values()) {
+                for (Attachment attachment : proposal.attachments()) migrateAttachment(attachment);
+            }
+            atomicWrite(storePath, PROPOSALS_FILE, json.writeValueAsString(migrated.values()));
+            LOG.info("Knowledge proposal store initialized (proposals={})", migrated.size());
+        }
+        var loaded = readProposals(file);
+        if (!Files.exists(initialized, LinkOption.NOFOLLOW_LINKS)) atomicWrite(storePath, ".initialized", "1");
+        proposals.putAll(loaded);
         proposalsLoaded = true;
+    }
+
+    private void migrateAttachment(Attachment attachment) throws IOException {
+        Path destination = attachmentPath(attachment.documentId());
+        Path legacy = indexPath.resolve("attachments").resolve(attachment.documentId());
+        rejectSymlinkParents(legacy);
+        try {
+            if (!Files.isRegularFile(legacy, LinkOption.NOFOLLOW_LINKS)
+                    || Files.size(legacy) > AttachmentImage.MAX_BYTES
+                    || !attachment.version().equals(fileHash(legacy))) throw new IOException("legacy-attachment-invalid");
+            Files.createDirectories(destination.getParent());
+            if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
+                if (!attachment.version().equals(fileHash(destination))) throw new IOException("attachment-migration-conflict");
+                return;
+            }
+            Path temporary = Files.createTempFile(destination.getParent(), ".migration-", ".tmp");
+            try {
+                Files.copy(legacy, temporary, StandardCopyOption.REPLACE_EXISTING);
+                if (!attachment.version().equals(fileHash(temporary))) throw new IOException("attachment-migration-changed");
+                Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE);
+            } finally {
+                Files.deleteIfExists(temporary);
+            }
+        } catch (Exception ex) {
+            throw new IOException("attachment-migration-failed", ex);
+        }
     }
 
     private void saveProposal(KnowledgeProposal next) {
         var changed = new LinkedHashMap<>(proposals);
         changed.put(next.id(), next);
+        boolean newlyApproved = next.state() == State.APPROVED
+                && (proposals.get(next.id()) == null || proposals.get(next.id()).state() != State.APPROVED);
         try {
-            rejectSymlinkParents(indexPath.resolve(PROPOSALS_FILE));
+            if (next.state() == State.APPROVED) published.publish(next, publicationFolder(next));
+            else published.archive(next.id());
+            rejectSymlinkParents(storePath.resolve(PROPOSALS_FILE));
             String snapshot = json.writeValueAsString(changed.values());
             if (snapshot.getBytes(StandardCharsets.UTF_8).length > 32 * 1024 * 1024) {
                 throw new IOException("proposal-store-limit");
             }
-            atomicWrite(PROPOSALS_FILE, snapshot);
+            atomicWrite(storePath, PROPOSALS_FILE, snapshot);
         } catch (Exception ex) {
-            throw new AiException("PROPOSAL_UNAVAILABLE", "제안 상태를 저장할 수 없어요. 다시 시도해 주세요.");
+            if (newlyApproved) {
+                try { published.archive(next.id()); } catch (IOException ignored) { LOG.warn("Publication rollback unavailable"); }
+            }
+            throw new AiException("PROPOSAL_UNAVAILABLE", "제안 상태와 승인 파일을 저장할 수 없어요. 경로와 저장소를 확인해 주세요.");
         }
         proposals.put(next.id(), next);
     }
 
+    private String publicationFolder(KnowledgeProposal proposal) throws IOException {
+        if (proposal.kind() == Kind.NEW) return proposal.folderPath();
+        Entry source = officialSource(proposal.sourceDocumentId());
+        if (source == null) throw new IOException("publication-original-missing");
+        int separator = source.path().lastIndexOf('/');
+        return separator < 0 ? "" : source.path().substring(0, separator);
+    }
+
+    private void syncPublishedProposals() throws IOException {
+        for (String id : published.ids()) {
+            KnowledgeProposal proposal = proposals.get(id);
+            if (!indexableProposal(proposal)) published.archive(id);
+        }
+        for (KnowledgeProposal proposal : proposals.values()) {
+            if (indexableProposal(proposal)) published.publish(proposal, publicationFolder(proposal));
+        }
+    }
+
     private void syncApprovedProposals() throws IOException {
         for (Entry entry : List.copyOf(approvedEntries.values())) {
-            if (!indexableProposal(proposals.get(proposalId(entry.path())))) {
+            if (!indexableProposal(proposals.get(proposalId(entry.path()))) || !published.ready(proposals.get(proposalId(entry.path())))) {
                 writer.deleteDocuments(new Term("documentId", entry.documentId()));
                 approvedEntries.remove(entry.path());
             }
         }
         for (KnowledgeProposal proposal : proposals.values()) {
-            if (!indexableProposal(proposal)) continue;
+            if (!indexableProposal(proposal) || !published.ready(proposal)) continue;
             String path = PROPOSAL_PATH_PREFIX + proposal.id() + ".md";
             if (approvedEntries.containsKey(path)) continue;
             byte[] markdown = proposalMarkdown(proposal);
@@ -688,7 +844,8 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
                 } catch (Exception ex) { LOG.warn("Approved attachment unavailable ({})", ex.getClass().getSimpleName()); }
             }
             var documents = indexDocuments(id, path, title, proposal.project(), "uncategorized", "md",
-                    version, modified, chunks, true);
+                    version, modified, chunks, true,
+                    proposal.kind() == Kind.NEW ? proposal.folderPath() : officialSource(proposal.sourceDocumentId()).path());
             writer.updateDocuments(new Term("documentId", id), documents);
             approvedEntries.put(path, new Entry(id, path, title, proposal.project(), "uncategorized", "md", version,
                     markdown.length, modified, "ACTIVE", documents.size(), "", "", proposal.updatedAt()));
@@ -708,9 +865,20 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
                 && source.project().equals(proposal.project()) && currentlyReadable(source);
     }
 
-    private boolean mayReadApproved(Entry entry, Set<String> projects) {
+    private boolean mayAccessProposal(KnowledgeProposal proposal, AccessContext access) {
+        return hasProposalScope(proposal.project(), access.projects()) && exclusionsAllowProposal(proposal, access);
+    }
+
+    private boolean exclusionsAllowProposal(KnowledgeProposal proposal, AccessContext access) {
+        if (!access.allowsPath(proposal.project()) || !access.allowsPath(proposal.folderPath() == null ? proposal.project() : proposal.folderPath())) return false;
+        if (proposal.kind() == Kind.NEW || access.excludedPaths().isEmpty()) return true;
+        Entry source = officialSource(proposal.sourceDocumentId());
+        return source != null && access.allowsPath(source.path());
+    }
+
+    private boolean mayReadApproved(Entry entry, AccessContext access) {
         KnowledgeProposal proposal = proposals.get(proposalId(entry.path()));
-        return proposal != null && proposal.state() == State.APPROVED && hasProposalScope(entry.project(), projects)
+        return proposal != null && proposal.state() == State.APPROVED && published.ready(proposal) && mayAccessProposal(proposal, access)
                 && (proposal.kind() == Kind.NEW || currentApprovedBase(proposal));
     }
 
@@ -749,7 +917,12 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
         } catch (Exception ex) { return false; }
     }
 
-    public synchronized Optional<SourceFile> download(String documentId, String version, Set<String> projects) {
+    public Optional<SourceFile> download(String documentId, String version, Set<String> projects) {
+        return download(documentId, version, new AccessContext("", projects));
+    }
+
+    public synchronized Optional<SourceFile> download(String documentId, String version, AccessContext access) {
+        Set<String> projects = access.projects();
         if (!healthy || !CONTENT_ID.matcher(documentId).matches() || version == null
                 || !CONTENT_ID.matcher(version).matches() || projects.isEmpty()) return Optional.empty();
         for (Entry approved : approvedEntries.values()) {
@@ -757,7 +930,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
             boolean parent = documentId.equals(approved.documentId()) && version.equals(approved.version());
             boolean attached = proposal != null && proposal.attachments().stream()
                     .anyMatch(file -> file.documentId().equals(documentId) && file.version().equals(version));
-            if ((parent || attached) && mayReadApproved(approved, projects)) {
+            if ((parent || attached) && mayReadApproved(approved, access)) {
                 return parent ? Optional.of(new SourceFile("approved-" + proposal.id() + ".md", proposalMarkdown(proposal)))
                         : readAttachment(proposal, documentId, version);
             }
@@ -765,7 +938,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
         Entry entry = entries.values().stream()
                 .filter(candidate -> documentId.equals(candidate.documentId()) && version.equals(candidate.version())
                         && "ACTIVE".equals(candidate.state()) && candidate.chunks() > 0
-                        && hasProjectAccess(candidate, projects))
+                        && hasProjectAccess(candidate, projects) && access.allowsPath(candidate.path()))
                 .findFirst().orElse(null);
         if (entry == null || entry.bytes() < 0 || entry.bytes() > DocumentExtractor.MAX_BYTES) return Optional.empty();
         try {
@@ -905,9 +1078,14 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
         }
         atomicWrite("inventory.csv", csv.toString());
     }
-    private void atomicWrite(String name, String value) throws Exception {
-        Path destination = indexPath.resolve(name);
-        Path temporary = Files.createTempFile(indexPath, "metadata-", ".tmp");
+    private void atomicWrite(String name, String value) throws IOException {
+        atomicWrite(indexPath, name, value);
+    }
+
+    private void atomicWrite(Path base, String name, String value) throws IOException {
+        Path destination = base.resolve(name);
+        rejectSymlinkParents(destination);
+        Path temporary = Files.createTempFile(base, "metadata-", ".tmp");
         try {
             Files.writeString(temporary, value, StandardCharsets.UTF_8);
             Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
