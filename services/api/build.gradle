@@ -31,10 +31,6 @@ dependencies {
 
 tasks.named('test') { useJUnitPlatform() }
 
-tasks.named('bootJar') {
-    archiveFileName = 'e2u-chat-bot.jar'
-}
-
 // Private overrides belong under .secret, outside the application resources.
 tasks.named('processResources') {
     exclude('.secret/**', 'application-local.yml', 'application-local.yaml', 'application-local.properties')
