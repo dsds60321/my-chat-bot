@@ -1,6 +1,7 @@
 package com.mychatbot.chat;
 
 import com.mychatbot.security.AccessContext;
+import com.mychatbot.logging.ContentLog;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
@@ -22,9 +23,14 @@ public class ChatController {
         AccessContext access = AccessContext.from(authentication);
         RequestLimiter.Lease lease = limiter.acquire(access.userId());
         String requestId = ApiRequestLog.requestId(exchange);
+        var peer = exchange.getRequest().getRemoteAddress();
+        var logRequest = new ContentLog.Request(requestId, java.time.Instant.now().toString(), access.userId(),
+                exchange.getRequest().getMethod().name(), exchange.getRequest().getPath().value(),
+                peer == null || peer.getAddress() == null ? "-" : peer.getAddress().getHostAddress());
         return chat.stream(request, access, requestId)
                 .doOnNext(event -> ApiRequestLog.streamTerminal(requestId, event))
                 .map(event -> ServerSentEvent.builder(event.data()).event(event.event()).build())
-                .doFinally(signal -> lease.close());
+                .doFinally(signal -> lease.close())
+                .contextWrite(context -> context.put(ContentLog.REQUEST, logRequest));
     }
 }

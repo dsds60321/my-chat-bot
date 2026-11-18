@@ -12,6 +12,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -19,6 +22,7 @@ import reactor.core.publisher.Flux;
 import reactor.test.StepVerifier;
 import static org.assertj.core.api.Assertions.*;
 
+@ExtendWith(OutputCaptureExtension.class)
 class ChatServiceTest {
     private static SearchHit hit() { return new SearchHit("doc", "paye2u/table.md", "MCHT 정의", "paye2u", "database", "md", "1", "chunk", "MCHT", null, "MCHT 테이블에는 merchantId가 있어요.", 1, false); }
     private static AiProvider provider(AtomicInteger calls) {
@@ -41,6 +45,42 @@ class ChatServiceTest {
     private static SearchHit selectionHit(String id, String text, boolean approved) {
         return new SearchHit(id, "e2u/" + id + ".md", text, "e2u", "operations", "md", "b".repeat(64),
                 id + ":1", "절차", 21, text, 1, approved);
+    }
+
+    @Test void logsBothLegsAndFallbackWithOneRequestId(CapturedOutput output) {
+        AiProvider first = provider("groq", req -> Flux.error(new AiException("RATE_LIMITED", "private upstream")));
+        AiProvider second = provider("claude", req -> Flux.just("답변 Bear", "er private-credential"));
+        var service = new ChatService(router("groq,claude", first, second), (q, p, l) -> List.of(hit()));
+        var events = service.stream(new ChatRequest("MCHT 질문", null),
+                new AccessContext("u", Set.of("paye2u")), "trace-1")
+                .contextWrite(context -> context.put(com.mychatbot.logging.ContentLog.REQUEST,
+                        new com.mychatbot.logging.ContentLog.Request("trace-1", "2026-11-18T01:00:00Z", "logged-in-user",
+                                "POST", "/api/chat/stream", "127.0.0.2"))).collectList().block();
+        assertThat(events).extracting(StreamEvent::event).containsExactly("sources", "delta", "delta", "done");
+        assertThat(output.getOut().lines().filter(line -> line.contains("requestId=trace-1"))).allSatisfy(line ->
+                assertThat(line).contains("[trace-1]", "requestedAt=2026-11-18T01:00:00Z", "userId=logged-in-user",
+                        "method=POST", "url=/api/chat/stream", "clientIp=127.0.0.2"));
+        assertThat(output.getOut()).contains("user_request requestId=trace-1", "MCHT 질문",
+                "ai_request requestId=trace-1 provider=groq", "MCHT 테이블",
+                "ai_response requestId=trace-1 provider=groq outcome=error code=RATE_LIMITED",
+                "ai_response requestId=trace-1 provider=claude outcome=done", "user_response requestId=trace-1",
+                "[REDACTED]").doesNotContain("private-credential", "private upstream");
+    }
+
+    @Test void logsLocalAnswersRejectedSecretsAndPartialCancellation(CapturedOutput output) {
+        var local = new ChatService(router(new MockAiProvider()), (q, p, l) -> List.of());
+        local.stream(new ChatRequest("근거 없는 질문", null), new AccessContext("u", Set.of()), "local").blockLast();
+        local.stream(new ChatRequest("password=private-input", null), new AccessContext("u", Set.of()), "rejected").blockLast();
+        var partial = new ChatService(router(provider("groq", req -> Flux.just("부분 답변").concatWith(Flux.never()))),
+                (q, p, l) -> List.of(hit()));
+        StepVerifier.create(partial.stream(new ChatRequest("MCHT", null),
+                new AccessContext("u", Set.of("paye2u")), "cancelled"))
+                .expectNextCount(2).thenCancel().verify();
+        assertThat(output.getOut()).contains("user_response requestId=local", "관련 내용을 찾지 못했어요",
+                "user_response requestId=rejected provider=- outcome=error code=SENSITIVE_INPUT",
+                "user_response requestId=cancelled provider=- outcome=cancel", "부분 답변",
+                "ai_response requestId=cancelled provider=groq outcome=cancel")
+                .doesNotContain("private-input", "ai_request requestId=local", "ai_request requestId=rejected");
     }
 
     @Test void multipleDocumentsRequireSelectionWithoutCallingAnyProvider() {

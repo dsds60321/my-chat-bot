@@ -1,5 +1,6 @@
 package com.mychatbot.ai;
 
+import com.mychatbot.logging.ContentLog;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -36,11 +37,21 @@ public class AiProviderRouter {
 
     private <T> Flux<T> attempt(List<AiProvider> ordered, int index, AiRequest request,
                                 Function<String, T> delta, Function<String, T> done, AiException previous) {
-        return Flux.defer(() -> {
+        return Flux.deferContextual(context -> {
             AiProvider provider = ordered.get(index);
+            ContentLog.Request logRequest = context.getOrDefault(ContentLog.REQUEST,
+                    new ContentLog.Request("-", java.time.Instant.now().toString(), "-", "POST", "/api/chat/stream", "-"));
+            var response = new ContentLog.Response("ai", logRequest, provider.id());
+            if (!(provider instanceof HttpAiProvider)) {
+                ContentLog.request("ai", logRequest, provider.id(),
+                        "question=" + request.question() + " context=" + request.context());
+            }
             AtomicBoolean emitted = new AtomicBoolean();
             return Flux.defer(() -> provider.stream(request))
-                    .doOnNext(text -> emitted.set(true))
+                    .doOnNext(text -> { emitted.set(true); response.append(text); })
+                    .doOnComplete(() -> response.finish("done", "-"))
+                    .doOnError(error -> response.finish("error", error instanceof AiException ai ? ai.code() : "INTERNAL_ERROR"))
+                    .doFinally(signal -> response.finish(signal.toString(), "-"))
                     .map(delta)
                     .concatWith(Mono.fromSupplier(() -> done.apply(provider.id())))
                     .onErrorResume(AiException.class, error -> {

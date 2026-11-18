@@ -128,6 +128,13 @@ final class DocumentExtractor {
         return handler.toString();
     }
 
+    private static final Set<String> TABLE_HEADERS = Set.of(
+            "구분", "작업명", "업무명", "제목", "항목", "처리내용", "내용", "확인사항", "작성자", "요청지", "비고",
+            "설명", "방법", "절차", "기준", "테이블명", "컬럼명", "타입", "필드명", "필수", "기본값", "예시",
+            "name", "title", "task", "description", "type", "column", "field", "value", "notes", "procedure");
+    // shortcut: unknown layouts remain independent rows until an explicit task/title header is recognized.
+    private static final Set<String> TASK_HEADERS = Set.of("작업명", "업무명", "제목", "항목", "task", "title", "procedure");
+
     private static List<Chunk> excel(Path path) throws Exception {
         List<Chunk> result = new ArrayList<>();
         int cells = 0;
@@ -138,21 +145,22 @@ final class DocumentExtractor {
             if (workbook.getNumberOfSheets() > 100) throw new IllegalArgumentException("sheet-limit");
             for (var sheet : workbook) {
                 if (sheet.getLastRowNum() > 20000) throw new IllegalArgumentException("row-limit");
-                StringBuilder context = new StringBuilder("Sheet: ").append(sheet.getSheetName()).append('\n');
-                for (var merged : sheet.getMergedRegions()) {
-                    context.append("Merged: ").append(merged.formatAsString()).append(" = ");
-                    Row row = sheet.getRow(merged.getFirstRow());
-                    Cell cell = row == null ? null : row.getCell(merged.getFirstColumn());
-                    if (cell != null) context.append(formatter.formatCellValue(cell));
-                    context.append('\n');
-                    if (context.length() > 6000) throw new IllegalArgumentException("merged-context-limit");
-                }
-                List<String> headers = new ArrayList<>();
+                var mergedRegions = sheet.getMergedRegions();
+                mergedRegions.sort(java.util.Comparator.comparingInt(org.apache.poi.ss.util.CellRangeAddress::getFirstRow));
+                var activeMerges = new ArrayList<org.apache.poi.ss.util.CellRangeAddress>();
+                int nextMerge = 0;
+                String headers = "";
+                String previousHeading = "";
+                String task = "";
+                int taskColumn = -1;
+                int group = -1;
+                int previousRow = -2;
                 java.util.Set<Integer> sensitiveColumns = new java.util.HashSet<>();
                 for (Row row : sheet) {
                     if (row.getLastCellNum() > 1000) throw new IllegalArgumentException("column-limit");
                     StringBuilder line = new StringBuilder("Row ").append(row.getRowNum() + 1).append(": ");
-                    boolean hasValue = false;
+                    var values = new java.util.LinkedHashMap<Integer, String>();
+                    boolean shortLabels = true;
                     for (Cell cell : row) {
                         if (++cells > 100000) throw new IllegalArgumentException("cell-limit");
                         String value = formatter.formatCellValue(cell);
@@ -160,22 +168,75 @@ final class DocumentExtractor {
                             throw new Quarantined();
                         if (SensitiveData.sensitiveHeader(value)) sensitiveColumns.add(cell.getColumnIndex());
                         if (value.isBlank() && cell.getCellType() != CellType.FORMULA) continue;
-                        hasValue = true;
+                        values.put(cell.getColumnIndex(), value);
+                        shortLabels &= value.length() <= 60 && !value.contains("\n") && cell.getCellType() != CellType.FORMULA;
                         line.append(CellReference.convertNumToColString(cell.getColumnIndex())).append('=');
                         if (cell.getCellType() == CellType.FORMULA)
                             line.append("formula[").append(cell.getCellFormula()).append("] cached[").append(value).append(']');
                         else line.append(value);
                         line.append(" | ");
                     }
-                    if (!hasValue) continue;
+                    if (values.isEmpty()) { group = -1; previousHeading = ""; continue; }
+                    if (row.getRowNum() != previousRow + 1) { group = -1; previousHeading = ""; }
                     String rowText = line.toString();
-                    // shortcut: retain the first eight populated rows as table context; richer per-table detection can replace this for heterogeneous sheets.
-                    if (headers.size() < 8 && String.join("\n", headers).length() + rowText.length() < 6000) headers.add(rowText);
-                    String content = context + "Header/table context:\n" + String.join("\n", headers) + "\n" + rowText;
-                    if (content.length() > MAX_CHUNK) throw new IllegalArgumentException("row-text-limit");
-                    chars += content.length();
+                    String mergedTask = "";
+                    StringBuilder merged = new StringBuilder();
+                    boolean horizontalHeading = false;
+                    activeMerges.removeIf(region -> region.getLastRow() < row.getRowNum());
+                    while (nextMerge < mergedRegions.size() && mergedRegions.get(nextMerge).getFirstRow() <= row.getRowNum()) {
+                        var region = mergedRegions.get(nextMerge++);
+                        if (region.getLastRow() >= row.getRowNum()) activeMerges.add(region);
+                    }
+                    for (var region : activeMerges) {
+                        Row anchor = sheet.getRow(region.getFirstRow());
+                        Cell cell = anchor == null ? null : anchor.getCell(region.getFirstColumn());
+                        String value = cell == null ? "" : formatter.formatCellValue(cell);
+                        if (taskColumn >= region.getFirstColumn() && taskColumn <= region.getLastColumn()) mergedTask = value.strip();
+                        merged.append("Merged: ").append(region.formatAsString()).append(" = ").append(value).append('\n');
+                        horizontalHeading |= region.getFirstRow() == region.getLastRow() && region.getFirstColumn() < region.getLastColumn();
+                        if (merged.length() > 6000) throw new IllegalArgumentException("merged-context-limit");
+                    }
+                    boolean header = shortLabels && values.values().stream()
+                            .filter(value -> TABLE_HEADERS.contains(value.replaceAll("\\s+", "").toLowerCase(Locale.ROOT))).count() >= 2;
+                    if (header) {
+                        headers = previousHeading + rowText + "\n";
+                        taskColumn = values.entrySet().stream()
+                                .filter(entry -> TASK_HEADERS.contains(entry.getValue().replaceAll("\\s+", "").toLowerCase(Locale.ROOT)))
+                                .mapToInt(java.util.Map.Entry::getKey).findFirst().orElse(-1);
+                        task = ""; group = -1;
+                    }
+                    String explicitTask = values.getOrDefault(taskColumn, "").strip();
+                    String rowTask = explicitTask.isEmpty() ? mergedTask : explicitTask;
+                    boolean continuation = !header && taskColumn >= 0 && explicitTask.isEmpty() && group >= 0
+                            && (rowTask.isEmpty() || rowTask.equals(task));
+                    if (!continuation) {
+                        task = header || taskColumn < 0 ? "" : rowTask;
+                        String section = sheet.getSheetName() + (task.isEmpty() ? "" : " · " + task.substring(0, Math.min(task.length(), 240)));
+                        String content = "Sheet: " + sheet.getSheetName() + "\n" + merged
+                                + (header || headers.isEmpty() ? "" : "Header/table context:\n" + headers) + rowText;
+                        if (content.length() > MAX_CHUNK) throw new IllegalArgumentException("row-text-limit");
+                        result.add(new Chunk(section, row.getRowNum() + 1, content));
+                        group = task.isEmpty() ? -1 : result.size() - 1;
+                        chars += content.length();
+                    } else {
+                        Chunk prior = result.get(group);
+                        String addition = (prior.text().contains(merged.toString()) ? "" : merged.toString()) + rowText;
+                        String content = prior.text() + "\n" + addition;
+                        if (content.length() <= MAX_CHUNK) {
+                            result.set(group, new Chunk(prior.section(), prior.row(), content));
+                            chars += addition.length() + 1;
+                        } else {
+                            content = "Sheet: " + sheet.getSheetName() + "\nTask: " + task + "\n" + merged
+                                    + "Header/table context:\n" + headers + rowText;
+                            if (content.length() > MAX_CHUNK) throw new IllegalArgumentException("row-text-limit");
+                            result.add(new Chunk(prior.section(), row.getRowNum() + 1, content));
+                            group = result.size() - 1;
+                            chars += content.length();
+                        }
+                    }
                     if (chars > MAX_CHARS) throw new IllegalArgumentException("text-size-limit");
-                    result.add(new Chunk(sheet.getSheetName(), row.getRowNum() + 1, content));
+                    previousHeading = horizontalHeading && values.size() == 1 && rowText.length() <= 300 ? merged.toString() : "";
+                    previousRow = row.getRowNum();
                 }
             }
         }

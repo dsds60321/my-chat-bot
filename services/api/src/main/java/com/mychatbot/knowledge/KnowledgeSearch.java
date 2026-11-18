@@ -10,4 +10,9 @@ public interface KnowledgeSearch {
     default List<SearchHit> search(String question, com.mychatbot.security.AccessContext access, int limit) {
         return search(question, access.projects(), limit).stream().filter(hit -> access.allowsPath(hit.path())).toList();
     }
+    default List<SearchHit> search(String question, com.mychatbot.security.AccessContext access, int limit,
+                                  String documentId, String version) {
+        return search(question, access, limit).stream().filter(hit -> documentId == null
+                || (documentId.equals(hit.documentId()) && java.util.Objects.equals(version, hit.version()))).toList();
+    }
 }

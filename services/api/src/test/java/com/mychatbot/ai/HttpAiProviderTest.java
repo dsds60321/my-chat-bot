@@ -12,6 +12,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.boot.context.properties.bind.Bindable;
@@ -21,6 +24,7 @@ import reactor.test.StepVerifier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@ExtendWith(OutputCaptureExtension.class)
 class HttpAiProviderTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private final AiProperties settings = new AiProperties();
@@ -73,7 +77,7 @@ class HttpAiProviderTest {
     @ParameterizedTest
     @CsvSource({"codex, /v1/responses, max_output_tokens", "claude, /v1/messages, max_tokens",
             "gemini, /v1/chat/completions, max_tokens", "kimi, /v1/chat/completions, max_completion_tokens"})
-    void sendsProviderSpecificRequestAndStreamsOnlyAnswer(String id, String expectedPath, String limitField) {
+    void sendsProviderSpecificRequestAndStreamsOnlyAnswer(String id, String expectedPath, String limitField, CapturedOutput output) {
         String response = switch (id) {
             case "codex" -> sse("""
                     {"type":"response.reasoning_text.delta","delta":"hidden"}
@@ -95,6 +99,8 @@ class HttpAiProviderTest {
         respond(200, response);
         StepVerifier.create(provider(id).stream(new AiRequest("질문", "업무 근거")))
                 .expectNext("답변").expectComplete().verify(Duration.ofSeconds(6));
+        assertThat(output.getOut()).contains("ai_request", "provider=" + id, "model=", "한국어로 답하세요", "업무 근거")
+                .doesNotContain("test-key", "Authorization", "x-api-key");
         assertThat(requests).hasValue(1);
         assertThat(path.get()).isEqualTo(expectedPath);
         assertThat(auth.get()).isEqualTo(id.equals("claude") ? "test-key" : "Bearer test-key");
@@ -147,6 +153,35 @@ class HttpAiProviderTest {
                 .expectNext("답변", "claude").expectComplete().verify(Duration.ofSeconds(6));
         assertThat(requests).hasValue(1);
         assertThat(next).hasValue(1);
+    }
+
+    @Test void recordsUsageAndInputLengthsWithoutAnotherRequest(CapturedOutput output) {
+        respond(200, sse("""
+                {"choices":[{"delta":{"content":"답변"},"finish_reason":"stop"}],"x_groq":{"usage":{"prompt_tokens":120,"completion_tokens":30,"total_tokens":150}}}
+                [DONE]
+                """));
+        StepVerifier.create(provider("groq").stream(new AiRequest("질문", "근거")))
+                .expectNext("답변").expectComplete().verify(Duration.ofSeconds(6));
+        assertThat(requests).hasValue(1);
+        assertThat(output.getOut()).contains("ai_request_metrics", "questionChars=2", "contextChars=2", "outputLimit=4096",
+                "ai_usage", "inputTokens=120", "outputTokens=30", "totalTokens=150").doesNotContain("test-key");
+    }
+
+    @Test void recordsOnlyBoundedQuotaMetadata(CapturedOutput output) {
+        respond(429, "{\"error\":{\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\",\"message\":\"private upstream detail\"}}");
+        StepVerifier.create(provider("groq").stream(new AiRequest("질문", "")))
+                .expectError(AiException.class).verify(Duration.ofSeconds(6));
+        assertThat(output.getOut()).contains("ai_upstream_error", "status=429", "upstreamType=tokens", "upstreamCode=rate_limit_exceeded", "retryAfterSeconds=9")
+                .doesNotContain("private upstream detail", "test-key");
+        assertThat(requests).hasValue(1);
+    }
+
+    @Test void unknownErrorIdentifiersAreNotWrittenToDiagnostics(CapturedOutput output) {
+        respond(429, "{\"error\":{\"type\":\"private-upstream-token\",\"code\":\"private-account-value\",\"message\":\"private upstream detail\"}}");
+        StepVerifier.create(provider("groq").stream(new AiRequest("질문", "")))
+                .expectError(AiException.class).verify(Duration.ofSeconds(6));
+        assertThat(output.getOut()).contains("upstreamType=-", "upstreamCode=-")
+                .doesNotContain("private-upstream-token", "private-account-value", "private upstream detail", "test-key");
     }
 
     private static String sse(String lines) {

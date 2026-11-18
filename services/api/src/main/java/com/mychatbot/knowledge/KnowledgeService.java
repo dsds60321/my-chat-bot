@@ -71,7 +71,7 @@ import org.springframework.stereotype.Service;
 @Service
 @EnableScheduling
 public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
-    private static final String POLICY = "knowledge-policy-v17-managed-physical-bodies";
+    private static final String POLICY = "knowledge-policy-v18-task-evidence";
     private static final Logger LOG = LoggerFactory.getLogger(KnowledgeService.class);
     private static final Set<String> TYPES = Set.of("md", "txt", "text", "java", "xml", "json", "sql", "xlsx", "xls", "docx", "doc", "pptx", "ppt", "pdf");
     public static final Set<String> SUPPORTED_PROJECTS = Set.of("paye2u", "syslink", "operations", "notes", "common");
@@ -79,6 +79,7 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
     private static final String SHARED_WORKBOOK_PROJECT = "paye2u+syslink";
     private static final Set<String> SHARED_WORKBOOK_GRANTS = Set.of("paye2u", "syslink");
     private static final Set<String> STOP = Set.of("알려", "알려줘", "알려주세요", "주세요", "문서", "관련", "대한", "대해", "어떤", "무엇", "어떻게", "어디", "있어", "있나요", "있", "하", "해", "줘", "수", "것", "좀", "내용", "설명", "확인", "찾아", "방법", "요", "나", "때", "가요", "테이블", "컬럼", "알리", "법", "순서");
+    private static final Set<String> QUERY_ACTIONS = Set.of("설정", "등록", "추가", "처리", "절차", "변경", "진행", "수행");
     private static final Pattern TOKEN = Pattern.compile("[\\p{L}\\p{N}_./:$-]+");
     private static final Pattern CONTENT_ID = Pattern.compile("[0-9a-f]{64}");
     private static final int MAX_PROPOSALS = 1000;
@@ -384,6 +385,12 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
 
     @Override
     public synchronized List<SearchHit> search(String question, AccessContext access, int limit) {
+        return search(question, access, limit, null, null);
+    }
+
+    @Override
+    public synchronized List<SearchHit> search(String question, AccessContext access, int limit, String documentId, String version) {
+        if ((documentId == null) != (version == null)) return List.of();
         Set<String> projects = access.projects();
         if (question == null || question.isBlank() || question.length() > 4000 || projects == null || projects.isEmpty()) return List.of();
         // A request revalidates source availability and versions, so missed filesystem events cannot expose stale data.
@@ -403,6 +410,10 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
             if (relevance == null) return List.of();
             var queryBuilder = new BooleanQuery.Builder().add(acl.build(), BooleanClause.Occur.FILTER)
                     .add(relevance, BooleanClause.Occur.MUST);
+            if (documentId != null) {
+                queryBuilder.add(new TermQuery(new Term("documentId", documentId)), BooleanClause.Occur.FILTER);
+                queryBuilder.add(new TermQuery(new Term("version", version)), BooleanClause.Occur.FILTER);
+            }
             for (String excluded : access.excludedPaths()) {
                 queryBuilder.add(new TermQuery(new Term("access-path", excluded)), BooleanClause.Occur.MUST_NOT);
                 queryBuilder.add(new org.apache.lucene.search.PrefixQuery(new Term("access-path", excluded + "/")), BooleanClause.Occur.MUST_NOT);
@@ -422,16 +433,82 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
                         doc.get("category"), doc.get("type"), doc.get("version"), doc.get("chunkId"), doc.get("section"),
                         doc.getField("row") == null ? null : doc.getField("row").numericValue().intValue(), doc.get("text"), match.score, proposal,
                         proposal ? proposals.get(proposalId(current.path())).attachments() : List.of()));
-                    if (hits.size() >= Math.max(1, Math.min(limit, 20))) break;
                 }
             }
-            return List.copyOf(hits);
+            List<SearchHit> focused = preferTaskSections(question, hits);
+            return List.copyOf(focused.subList(0, Math.min(focused.size(), Math.max(1, Math.min(limit, 20)))));
         } catch (Exception ex) {
             healthy = false;
             scanError = ex.getClass().getSimpleName();
             LOG.warn("Knowledge search unavailable ({})", scanError);
             return List.of();
         }
+    }
+
+    private List<SearchHit> preferTaskSections(String question, List<SearchHit> hits) throws IOException {
+        Set<String> terms = subjectTerms(question);
+        Set<String> surface = new LinkedHashSet<>();
+        var words = TOKEN.matcher(question.toLowerCase(Locale.ROOT));
+        int wordCount = 0;
+        while (words.find() && wordCount++ < 64) {
+            String word = subjectSurface(words.group());
+            if (!word.isBlank()) surface.add(word);
+        }
+        int complete = terms.size() + surface.size();
+        if (complete < 2) return hits;
+        Map<String, Integer> coverage = new LinkedHashMap<>();
+        Map<String, Integer> best = new LinkedHashMap<>();
+        for (SearchHit hit : hits) {
+            if (!(hit.type().equals("xlsx") || hit.type().equals("xls")) || !hit.section().contains(" · ")) continue;
+            String title = hit.section().substring(hit.section().indexOf(" · ") + 3);
+            Set<String> section = subjectTerms(title);
+            section.retainAll(terms);
+            String compact = title.replaceAll("[^\\p{L}\\p{N}_]", "").toLowerCase(Locale.ROOT);
+            int score = section.size() + (int) surface.stream().filter(compact::contains).count();
+            coverage.put(hit.chunkId(), score);
+            best.merge(hit.documentId(), score, Math::max);
+        }
+        // Only a complete subject match excludes siblings; partial titles keep body-only evidence.
+        return hits.stream().filter(hit -> best.getOrDefault(hit.documentId(), 0) != complete
+                || !coverage.containsKey(hit.chunkId()) || coverage.get(hit.chunkId()).equals(best.get(hit.documentId())))
+                .sorted(java.util.Comparator.comparingDouble((SearchHit hit) -> hit.score()
+                        + coverage.getOrDefault(hit.chunkId(), 0) * 4).reversed()).toList();
+    }
+
+    private String subjectSurface(String word) throws IOException {
+        int end = 0;
+        try (TokenStream stream = analyzer.tokenStream("korean", word)) {
+            var term = stream.addAttribute(CharTermAttribute.class);
+            var pos = stream.addAttribute(PartOfSpeechAttribute.class);
+            var offset = stream.addAttribute(org.apache.lucene.analysis.tokenattributes.OffsetAttribute.class);
+            stream.reset();
+            while (stream.incrementToken()) {
+                if (isSubject(pos.getLeftPOS(), term.toString())) end = Math.max(end, offset.endOffset());
+            }
+            stream.end();
+        }
+        return word.substring(0, Math.min(word.length(), end));
+    }
+
+    private static boolean isSubject(POS.Tag tag, String value) {
+        return (tag == POS.Tag.NNG || tag == POS.Tag.NNP || tag == POS.Tag.SL || tag == POS.Tag.SN)
+                && !STOP.contains(value) && !QUERY_ACTIONS.contains(value);
+    }
+
+    private Set<String> subjectTerms(String text) throws IOException {
+        Set<String> terms = new HashSet<>();
+        try (TokenStream stream = analyzer.tokenStream("korean", text)) {
+            var term = stream.addAttribute(CharTermAttribute.class);
+            var pos = stream.addAttribute(PartOfSpeechAttribute.class);
+            stream.reset();
+            while (stream.incrementToken()) {
+                POS.Tag tag = pos.getLeftPOS();
+                String value = term.toString();
+                if (isSubject(tag, value)) terms.add(value);
+            }
+            stream.end();
+        }
+        return terms;
     }
 
     private Query relevanceQuery(String question) throws IOException {
@@ -472,6 +549,11 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
             stream.end();
         }
         terms.removeAll(exact);
+        Set<String> actions = new LinkedHashSet<>(terms);
+        actions.retainAll(QUERY_ACTIONS);
+        // Request wording ranks a procedure, while its subject and explicit identifiers remain required.
+        if (terms.size() > actions.size() || !exact.isEmpty() || !filenames.isEmpty()) terms.removeAll(actions);
+        else actions.clear();
         int count = terms.size() + exact.size() + filenames.size();
         if (count == 0) return null;
         BooleanQuery.Builder matches = new BooleanQuery.Builder();
@@ -506,6 +588,11 @@ public class KnowledgeService implements KnowledgeSearch, AutoCloseable {
             var literal = new BooleanQuery.Builder();
             for (String word : literalWords) literal.add(new TermQuery(new Term("exact", word)), BooleanClause.Occur.MUST);
             required.add(new DisjunctionMaxQuery(List.of(matches.build(), literal.build()), 0), BooleanClause.Occur.MUST);
+        }
+        for (String action : actions) {
+            required.add(new BoostQuery(new DisjunctionMaxQuery(List.of(
+                    new TermQuery(new Term("korean", action)),
+                    new BoostQuery(new TermQuery(new Term("section-text", action)), 3)), 0), 2), BooleanClause.Occur.SHOULD);
         }
         if (terms.size() >= 2 && terms.size() <= 8) {
             required.add(new BoostQuery(new PhraseQuery(2, "korean", terms.toArray(String[]::new)), 3),

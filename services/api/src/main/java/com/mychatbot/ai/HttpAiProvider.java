@@ -1,6 +1,7 @@
 package com.mychatbot.ai;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.mychatbot.logging.ContentLog;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.netty.channel.ChannelOption;
@@ -29,6 +30,7 @@ import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
 
 class HttpAiProvider implements AiProvider {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(HttpAiProvider.class);
     private static final Pattern RESET_DURATION = Pattern.compile(
             "(?:(\\d+)d)?(?:(\\d+)h)?(?:(\\d+)m)?(?:(\\d+(?:\\.\\d+)?)s)?(?:(\\d+(?:\\.\\d+)?)ms)?");
     private static final BigDecimal[] UNIT_SECONDS = {
@@ -61,11 +63,12 @@ class HttpAiProvider implements AiProvider {
     public String id() { return id; }
 
     public Flux<String> stream(AiRequest request) {
-        return Flux.defer(() -> {
+        return Flux.deferContextual(context -> {
             if (endpoint.getApiKey() == null || endpoint.getApiKey().isBlank()) {
                 return Flux.error(new AiException("PROVIDER_NOT_CONFIGURED", "서버의 AI 공급자 키가 설정되지 않았어요."));
             }
-            return Flux.defer(() -> call(request))
+            return Flux.defer(() -> call(request, context.getOrDefault(ContentLog.REQUEST,
+                    new ContentLog.Request("-", java.time.Instant.now().toString(), "-", "POST", "/api/chat/stream", "-"))))
                     .timeout(properties.getIdleTimeout())
                     .takeUntilOther(Mono.delay(properties.getRequestTimeout()).then(Mono.error(
                             new AiException("UPSTREAM_TIMEOUT", "AI 응답 시간이 초과됐어요. 다시 시도해 주세요."))))
@@ -75,7 +78,7 @@ class HttpAiProvider implements AiProvider {
         });
     }
 
-    private Flux<String> call(AiRequest request) {
+    private Flux<String> call(AiRequest request, ContentLog.Request logRequest) {
         String system = "한국어로 답하세요. 제공된 업무 문서에 명시된 사실만 요약하고 사용한 자료를 [번호]로 인용하세요. "
                 + "일반 지식으로 절차, 명령어, 프레임워크, 코드 또는 누락된 단계를 추가하지 마세요. "
                 + "업무명과 고유명사를 다른 의미로 해석하거나 바꾸지 마세요. "
@@ -108,6 +111,10 @@ class HttpAiProvider implements AiProvider {
                 || !("https".equals(uri.getScheme()) || (loopback && "http".equals(uri.getScheme())))) {
             return Flux.error(new AiException("UPSTREAM_UNAVAILABLE", "AI 공급자 주소 설정을 확인해 주세요."));
         }
+        ContentLog.request("ai", logRequest, id, "upstreamUrl=" + uri + " model=" + endpoint.getModel()
+                + " system=" + system + " user=" + user + " outputLimit=" + limit);
+        LOG.info("ai_request_metrics requestId={} provider={} questionChars={} contextChars={} systemChars={} outputLimit={}",
+                logRequest.id(), id, request.question().length(), request.context().length(), system.length(), limit);
         AtomicBoolean completed = new AtomicBoolean();
         return client.post().uri(uri)
                 .headers(h -> {
@@ -124,12 +131,12 @@ class HttpAiProvider implements AiProvider {
                         int status = response.statusCode().value();
                         HttpHeaders headers = response.headers().asHttpHeaders();
                         return response.bodyToMono(String.class).onErrorReturn("").defaultIfEmpty("")
-                                .flatMapMany(raw -> Flux.error(upstreamError(status, parseError(raw), headers)));
+                                .flatMapMany(raw -> Flux.error(upstreamError(status, parseError(raw), headers, logRequest.id())));
                     }
                     return response.bodyToFlux(new ParameterizedTypeReference<ServerSentEvent<String>>() {})
                             .mapNotNull(ServerSentEvent::data)
                             .takeUntil(data -> data.strip().equals("[DONE]"))
-                            .concatMap(data -> decode(data, completed, response.headers().asHttpHeaders()))
+                            .concatMap(data -> decode(data, completed, response.headers().asHttpHeaders(), logRequest.id()))
                             .concatWith(Flux.defer(() -> completed.get() ? Flux.empty() : Flux.error(truncated())));
                 });
     }
@@ -138,7 +145,7 @@ class HttpAiProvider implements AiProvider {
         return Map.of("role", role, "content", content);
     }
 
-    private Flux<String> decode(String data, AtomicBoolean completed, HttpHeaders headers) {
+    private Flux<String> decode(String data, AtomicBoolean completed, HttpHeaders headers, String requestId) {
         if (data.strip().equals("[DONE]") && !id.equals("codex") && !id.equals("claude")) {
             completed.set(true);
             return Flux.empty();
@@ -147,14 +154,15 @@ class HttpAiProvider implements AiProvider {
             JsonNode root = mapper.readTree(data);
             if (root == null || !root.isObject()) return Flux.error(invalidResponse());
             if (root.hasNonNull("error") || "error".equals(root.path("type").asText())) {
-                return Flux.error(upstreamError(0, root.path("error").isObject() ? root.path("error") : root, headers));
+                return Flux.error(upstreamError(0, root.path("error").isObject() ? root.path("error") : root, headers, requestId));
             }
+            logUsage(requestId, root);
             String type = root.path("type").asText();
             if (id.equals("codex")) {
                 return switch (type) {
                     case "response.output_text.delta", "response.refusal.delta" -> text(root.path("delta"));
                     case "response.completed" -> { completed.set(true); yield Flux.empty(); }
-                    case "response.failed" -> Flux.error(upstreamError(0, root.path("response").path("error"), headers));
+                    case "response.failed" -> Flux.error(upstreamError(0, root.path("response").path("error"), headers, requestId));
                     case "response.incomplete" -> Flux.error("max_output_tokens".equals(
                             root.path("response").path("incomplete_details").path("reason").asText()) ? lengthLimit() : truncated());
                     default -> Flux.empty();
@@ -186,6 +194,34 @@ class HttpAiProvider implements AiProvider {
         }
     }
 
+    private void logUsage(String requestId, JsonNode root) {
+        JsonNode usage = root.path("usage");
+        if (!usage.isObject()) usage = root.path("x_groq").path("usage");
+        if (!usage.isObject()) usage = root.path("response").path("usage");
+        if (!usage.isObject()) usage = root.path("message").path("usage");
+        if (!usage.isObject()) return;
+        Long input = tokenCount(usage, "prompt_tokens", "input_tokens");
+        Long output = tokenCount(usage, "completion_tokens", "output_tokens");
+        Long total = tokenCount(usage, "total_tokens", "total_tokens");
+        if (input != null || output != null || total != null) {
+            LOG.info("ai_usage requestId={} provider={} inputTokens={} outputTokens={} totalTokens={}", requestId, id, input, output, total);
+        }
+    }
+
+    private static Long tokenCount(JsonNode usage, String name, String alternative) {
+        JsonNode value = usage.has(name) ? usage.path(name) : usage.path(alternative);
+        return value.isIntegralNumber() && value.canConvertToLong() && value.longValue() >= 0 ? value.longValue() : null;
+    }
+
+    private static String diagnosticCode(String value) {
+        return QUOTA_CODES.contains(value) || Set.of("tokens", "requests", "invalid_request_error", "billing_error",
+                "authentication_error", "invalid_api_key", "permission_error", "engine_overloaded_error", "overloaded_error", "server_is_overloaded").contains(value) ? value : "-";
+    }
+
+    private static String diagnosticCount(String value) {
+        return value != null && value.matches("[0-9]{1,18}") ? value : "-";
+    }
+
     private static Flux<String> text(JsonNode value) {
         return value.isTextual() && !value.textValue().isEmpty() ? Flux.just(value.textValue()) : Flux.empty();
     }
@@ -205,7 +241,11 @@ class HttpAiProvider implements AiProvider {
             "RESOURCE_EXHAUSTED", "billing_hard_limit_reached", "insufficient_credits", "credit_balance_too_low",
             "project_budget_exceeded", "organization_budget_exceeded", "prepaid_credits_exhausted");
 
-    private AiException upstreamError(int status, JsonNode error, HttpHeaders headers) {
+    private AiException upstreamError(int status, JsonNode error, HttpHeaders headers, String requestId) {
+        LOG.info("ai_upstream_error requestId={} provider={} status={} upstreamType={} upstreamCode={} remainingRequests={} remainingTokens={} retryAfterSeconds={}",
+                requestId, id, status, diagnosticCode(error.path("type").asText()), diagnosticCode(error.path("code").asText()),
+                diagnosticCount(headers.getFirst("x-ratelimit-remaining-requests")),
+                diagnosticCount(headers.getFirst("x-ratelimit-remaining-tokens")), retryAfter(headers, Instant.now()));
         String type = error.path("type").asText();
         String code = error.path("code").asText();
         boolean overloaded = Set.of("engine_overloaded_error", "overloaded_error", "server_is_overloaded").contains(type)
