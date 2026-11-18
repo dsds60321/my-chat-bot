@@ -59,7 +59,7 @@
             <p id="proposal-target-help" class="status">왼쪽에서 폴더를 선택한 후 새 문서를 작성해 주세요.</p>
             <details id="document-preview" class="inline-document-preview" hidden>
               <summary><span id="document-preview-name"></span><small>문서 미리보기 · 접기/펼치기</small></summary>
-              <div class="document-preview-body"><p id="document-preview-path" class="folder-path"></p><button id="document-download" type="button" disabled>원본 다운로드</button><p id="document-preview-status" class="status" role="status" aria-live="polite"></p><div id="document-preview-content"></div>
+              <div class="document-preview-body"><p id="document-preview-path" class="folder-path"></p><button id="document-download" type="button" disabled>원본 다운로드</button><p id="document-preview-status" class="status" role="status" aria-live="polite"></p><div id="document-attachments" class="compact-file-list" aria-label="첨부파일" hidden></div><details id="document-content-preview"><summary>내용 미리보기 · 접기/펼치기</summary><div id="document-preview-content"></div></details>
                 <details id="document-versions" hidden><summary>이전 버전 복원</summary><p class="status">복원하면 현재 파일도 이전 버전으로 보관합니다.</p><label for="document-version">복원할 버전</label><select id="document-version"></select><label><input id="document-restore-consent" type="checkbox" /> 선택한 버전으로 복원하는 데 동의합니다.</label><button id="document-restore" type="button" disabled>선택 버전으로 복원</button></details>
               </div>
             </details>
@@ -85,7 +85,7 @@
         <div id="conversation" hidden class="conversation" tabindex="0" role="region" aria-label="질문과 답변">
           <div id="welcome" class="welcome"><h2>안녕하세요, 사내업무 봇입니다.</h2><p>궁금하신 사항을 물어보시거나 업무 지식을 학습시켜 주세요.</p></div>
           <p id="question" class="question" hidden></p>
-          <div id="answer-block" hidden><div class="answer-heading"><strong data-chatbot-name>MyChatBot</strong><span id="answer-provider">서버 응답</span><button id="read-answer" type="button" disabled>새창 ↗</button><button id="copy" type="button">복사</button></div><p id="answer" class="answer"></p><div id="document-choices" class="document-choices" role="group" aria-label="답변에 사용할 문서 선택" hidden></div><h2 id="sources-heading" class="sources-heading" hidden>검색 참고 자료</h2><ul id="sources" class="sources" aria-labelledby="sources-heading" hidden></ul></div>
+          <div id="answer-block" hidden><div class="answer-heading"><strong data-chatbot-name>MyChatBot</strong><span id="answer-provider">서버 응답</span><button id="read-answer" type="button" disabled>새창 ↗</button><button id="copy" type="button">복사</button></div><div id="answer-files" class="compact-file-list" aria-label="다운로드 파일" hidden></div><p id="answer" class="answer"></p><div id="document-choices" class="document-choices" role="group" aria-label="답변에 사용할 문서 선택" hidden></div><h2 id="sources-heading" class="sources-heading" hidden>검색 참고 자료</h2><ul id="sources" class="sources" aria-labelledby="sources-heading" hidden></ul></div>
         </div>
         <form id="question-form" hidden>
           <label class="sr-only" for="prompt">질문 입력</label>

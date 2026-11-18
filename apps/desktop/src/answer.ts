@@ -3,7 +3,7 @@ import { applyBranding } from './branding';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { emitTo, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { answerSnapshot, displaySourceImage, sourceFile, renderSources, snapshotText, type AnswerSnapshot, type SourceFile } from './sources';
+import { answerSnapshot, displaySourceImage, sourceFile, renderSources, appendAttachments, sourceDownloadFiles, snapshotText, type AnswerSnapshot, type SourceFile } from './sources';
 import { scrollingIndicator } from './scroll';
 
 void applyBranding();
@@ -51,7 +51,10 @@ function show(value: unknown): void {
     snapshot = answerSnapshot(value);
     pendingImages.clear();
     document.getElementById('answer')!.textContent = snapshot.answer;
-    renderSources(document.getElementById('sources') as HTMLUListElement, snapshot.sources, download, previewImage);
+    const files = document.getElementById('answer-files')!; files.replaceChildren();
+    const attachments = sourceDownloadFiles(snapshot.sources); files.hidden = !attachments.length;
+    appendAttachments(files, attachments, (file, image) => image ? previewImage(file, image) : download(file), true, false);
+    renderSources(document.getElementById('sources') as HTMLUListElement, snapshot.sources, download, previewImage, false, false);
     document.getElementById('answer-state')!.textContent = snapshot.partial ? '부분 답변' : '';
     copy.disabled = false; status.textContent = '';
   } catch { status.textContent = '답변을 불러오지 못했어요. 대화창에서 다시 열어 주세요.'; }

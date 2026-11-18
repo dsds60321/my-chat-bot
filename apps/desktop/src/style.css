@@ -223,3 +223,19 @@ textarea { font-size: 14px; }
 #document-versions summary { cursor: pointer; padding: 6px 0; font-weight: 600; }
 #document-versions label { display: block; margin: 8px 0; }
 #document-versions select { width: 100%; min-width: 0; }
+
+.compact-file-list { min-width: 0; margin: 8px 0; display: grid; gap: 4px; }
+.compact-file-list[hidden], .attachment-preview[hidden] { display: none; }
+.source-attachment { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px; background: #F8FAFD; }
+.attachment-name { flex: 1 1 70px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.attachment-size { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.attachment-action { min-height: 28px !important; padding: 3px 6px !important; font-size: 11px !important; white-space: nowrap; width: auto !important; }
+.source-attachment img { flex-basis: 100%; max-width: 100%; }
+.attachment-preview { min-width: 0; max-height: 360px; overflow: auto; padding: 8px; border: 1px solid var(--border); border-top: 0; }
+.attachment-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.attachment-preview iframe { width: 100%; height: 320px; border: 0; }
+.attachment-preview img { max-width: 100%; }
+#document-content-preview { margin-top: 8px; }
+#document-content-preview > summary { font-size: 12px; cursor: pointer; color: var(--muted); }
+.document-file { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sources .attachment-name { margin: 0; font-size: 12px; }

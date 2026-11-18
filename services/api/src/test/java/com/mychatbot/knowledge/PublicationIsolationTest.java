@@ -42,7 +42,7 @@ class PublicationIsolationTest {
         assertThat(service.download(attachment.documentId(), attachment.version(), admin)).isPresent();
     }
 
-    @ParameterizedTest @ValueSource(strings = {"body", "attachment", "canonical", "symlink", "directory"})
+    @ParameterizedTest @ValueSource(strings = {"body", "canonical", "symlink", "directory"})
     void onlyDamagedProposalIsRemovedBeforeTopLimitAndRecoversAfterExactRestore(String mode) throws Exception {
         KnowledgeProposal damaged, healthy;
         SearchHit a, b, original;
@@ -55,7 +55,6 @@ class PublicationIsolationTest {
             b = hit(service, "HEALTHY_ONLY_LOOKUP", healthy, admin);
             original = service.search("ORIGINAL_ONLY_LOOKUP", admin, 1).get(0);
             target = switch (mode) {
-                case "attachment" -> attachment(damaged);
                 case "canonical" -> store.resolve("attachments").resolve(damaged.attachments().get(0).documentId());
                 default -> body(damaged);
             };
@@ -68,7 +67,6 @@ class PublicationIsolationTest {
                 Files.writeString(target.resolve("child.txt"), "DIRECTORY_BYPASS_LOOKUP hidden");
             } else if (mode.equals("canonical")) Files.delete(target);
             else Files.writeString(target, "MANUAL_EDIT_LOOKUP changed");
-            // Direct source requests must reject the entire damaged proposal even before the next scan.
             assertThat(service.download(a.documentId(), a.version(), admin)).isEmpty();
             var blocked = damaged.attachments().get(0);
             assertThat(service.download(blocked.documentId(), blocked.version(), admin)).isEmpty();

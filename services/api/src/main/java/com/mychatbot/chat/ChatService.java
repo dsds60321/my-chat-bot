@@ -19,6 +19,8 @@ import reactor.core.scheduler.Schedulers;
 @Service
 public class ChatService {
     private static final int MAX_CONTEXT = 12000;
+    private static final java.util.regex.Pattern FILE_REQUEST = java.util.regex.Pattern.compile(
+            "다운로드|내려받|다운받|(?:파일|양식|서식)(?:을|를)?\\s*(?:줘|주세요|보내|전달|제공)");
     private static final String OMITTED = "\n[일부 검색 근거는 길이 한도로 생략됐습니다. 제공된 발췌에서 확인되지 않는 단계는 추측하지 마세요.]\n";
     private final AiProviderRouter router;
     private final KnowledgeSearch search;
@@ -34,7 +36,7 @@ public class ChatService {
             return Mono.fromCallable(() -> {
                 if (!SensitiveData.guard(request.question())) throw new AiException("SENSITIVE_INPUT", "비밀정보로 보이는 내용은 전송할 수 없어요. 제거한 뒤 질문해 주세요.");
                 return access.projects().isEmpty()
-                        ? List.<SearchHit>of() : search.search(request.question(), access, 20, request.documentId(), request.version());
+                        ? List.<SearchHit>of() : search.search(downloadRequest(request.question()) ? downloadQuery(request.question()) : request.question(), access, 20, request.documentId(), request.version());
             }).subscribeOn(Schedulers.boundedElastic()).flatMapMany(hits -> {
                 if ((request.documentId() == null) != (request.version() == null)) {
                     throw new AiException("SOURCE_SELECTION_CHANGED", "답변에 사용할 문서를 다시 선택해 주세요.");
@@ -45,7 +47,15 @@ public class ChatService {
                     if (hits.isEmpty()) {
                         throw new AiException("SOURCE_SELECTION_CHANGED", "선택한 문서가 변경되었거나 접근할 수 없어요. 원래 질문으로 다시 검색해 주세요.");
                     }
-                } else {
+                }
+                if (downloadRequest(request.question()) && !hits.isEmpty()) {
+                    var files = new java.util.LinkedHashMap<String, SourceMetadata>();
+                    for (SearchHit hit : hits) files.putIfAbsent(hit.documentId(), SourceMetadata.from(hit));
+                    return Flux.just(new StreamEvent("sources", Map.of("items", files.values().stream().limit(10).toList())),
+                            new StreamEvent("delta", new StreamEvent.Delta("요청하신 파일을 찾았어요. 표시된 파일에서 원본을 다운로드해 주세요.")),
+                            new StreamEvent("done", new StreamEvent.Done(requestId, "documents")));
+                }
+                if (request.documentId() == null) {
                     var documents = new java.util.LinkedHashMap<String, SourceMetadata>();
                     for (SearchHit hit : hits) documents.putIfAbsent(hit.documentId(), SourceMetadata.from(hit));
                     if (documents.size() > 1) {
@@ -101,6 +111,27 @@ public class ChatService {
                     .contextWrite(context -> context.put(ContentLog.REQUEST, logRequest));
         });
     }
+    private static boolean downloadRequest(String question) {
+        String wording = java.util.Arrays.stream(question.split("\\s+")).filter(word -> !literalFilename(word))
+                .collect(java.util.stream.Collectors.joining(" "));
+        return FILE_REQUEST.matcher(wording).find();
+    }
+
+    private static boolean literalFilename(String word) {
+        return word.matches(".*\\.[A-Za-z0-9]{1,8}.*");
+    }
+
+    private static String downloadQuery(String question) {
+        // Preserve literal filenames, and remove only request wording from natural-language tokens.
+        String query = java.util.Arrays.stream(question.split("\\s+"))
+                .map(word -> literalFilename(word) ? word : word
+                        .replaceAll("(?:다운로드|내려받기|내려받|다운받기|다운받)(?:해)?(?:주세요|줘|하기|해)?", "")
+                        .replaceAll("(?:전달|제공|보내)(?:해)?(?:주세요|줘|해)?", "")
+                        .replaceAll("^(?:주세요|줘|해줘|해주세요)[.!?]*$", ""))
+                .filter(word -> !word.isBlank()).collect(java.util.stream.Collectors.joining(" ")).strip();
+        return query.isEmpty() ? "양식" : query;
+    }
+
     private static String excerpt(String text, int budget) {
         int boundary = text.lastIndexOf("\n\n", budget);
         if (boundary < budget / 2) boundary = text.lastIndexOf('\n', budget);

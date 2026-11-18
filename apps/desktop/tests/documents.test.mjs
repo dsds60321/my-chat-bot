@@ -85,3 +85,20 @@ test('approved app documents use the same replacement scope as other documents',
   assert.deepEqual(proposalScope('new', 'common', managed), { project: 'common', folderPath: 'common' });
   assert.equal(browsableDocuments([managed])[0].replaceable, false);
 });
+
+
+test('manager attachments retain physical selection identity and reject nested or cyclic metadata', () => {
+  const child = { ...file, documentId: 'c'.repeat(64), path: 'common/attachments/owner/1--보고서.xlsx', title: '원래 보고서.xlsx', attachments: [], replaceable: true };
+  const parent = { ...file, path: 'common/설명.md', type: 'md', attachments: [child], password: 'omit' };
+  const parsed = browsableDocuments([parent])[0];
+  assert.equal(parsed.attachments[0].documentId, child.documentId);
+  assert.equal(parsed.attachments[0].title, '원래 보고서.xlsx');
+  assert.equal(Object.hasOwn(parsed, 'password'), false);
+  assert.deepEqual(proposalScope('replace', 'common', parsed.attachments[0]), {
+    project: 'common', folderPath: 'common/attachments/owner', sourceDocumentId: child.documentId, sourceVersion: child.version,
+  });
+  assert.equal(replacementFile({ name: '수정.xlsx', size: 20 }, parsed.attachments[0]), null);
+  assert.match(replacementFile({ name: '수정.png', size: 20 }, { ...file, path: 'common/image.png', replaceable: false }), /다운로드와 미리보기/);
+  assert.throws(() => browsableDocuments([{ ...parent, attachments: [parent] }]));
+  assert.throws(() => browsableDocuments([{ ...parent, attachments: [child, child, child, child] }]));
+});

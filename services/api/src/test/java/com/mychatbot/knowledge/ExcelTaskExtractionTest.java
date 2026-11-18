@@ -84,23 +84,23 @@ class ExcelTaskExtractionTest {
         }
     }
 
-    @Test void laterSensitiveDataStillQuarantinesTheWorkbook() throws Exception {
+    @Test void laterPersonalDataDoesNotRejectTheWorkbook() throws Exception {
         try (var workbook = new XSSFWorkbook()) {
             var sheet = workbook.createSheet("Tasks"); row(sheet, 1, "작업명", "처리내용");
             row(sheet, 2, "안전 업무", "SAFE_STEP"); row(sheet, 30, "다른 업무", "연락처 01012345678");
-            assertThatThrownBy(() -> extract(workbook)).isInstanceOf(DocumentExtractor.Quarantined.class);
+            assertThat(extract(workbook).text()).contains("01012345678");
         }
     }
 
-    @Test void credentialColumnsStillQuarantineAfterStructuralHeaderChanges() throws Exception {
+    @Test void credentialColumnsRemainAvailableAfterStructuralHeaderChanges() throws Exception {
         try (var workbook = new XSSFWorkbook()) {
             var sheet = workbook.createSheet("Tasks"); row(sheet, 1, "작업명", "처리내용", "password");
             row(sheet, 2, "안전 업무", "SAFE_STEP", "ordinary-looking-value");
-            assertThatThrownBy(() -> extract(workbook)).isInstanceOf(DocumentExtractor.Quarantined.class);
+            assertThat(extract(workbook).text()).contains("password", "ordinary-looking-value");
         }
     }
 
-    @Test void taskMetadataIsBoundedButFullRowRemainsAvailableAndGuarded() throws Exception {
+    @Test void taskMetadataIsBoundedButFullRowRemainsAvailable() throws Exception {
         try (var workbook = new XSSFWorkbook()) {
             var sheet = workbook.createSheet("Tasks"); row(sheet, 1, "작업 명", "처리 내용");
             String title = "긴제목".repeat(200);

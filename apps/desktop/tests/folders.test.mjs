@@ -81,3 +81,16 @@ test('folder-only tree hides documents and filename matches without altering the
   assert.deepEqual(documentTreeRows(state, [], expanded, '가이드'), []);
   assert.equal(documentTreeRows(state, files, expanded).at(-1).documentId, 'guide');
 });
+
+
+test('attached files appear below their document and filename search retains its parent', () => {
+  const state = folderCatalog({ folders: ['common'], requests: [], canCreateDirectly: true, canCreateProject: true });
+  const files = [{ documentId: 'parent', path: 'common/안내.md', attachments: [
+    { documentId: 'attachment', path: 'common/attachments/owner/1--양식.xlsx', title: '원본 양식.xlsx' },
+  ] }];
+  const rows = documentTreeRows(state, files, new Set(['common']));
+  assert.deepEqual(rows.map(row => row.documentId).filter(Boolean), ['parent', 'attachment']);
+  assert.equal(rows.at(-1).name, '원본 양식.xlsx');
+  assert.equal(rows.at(-1).depth, rows.at(-2).depth + 1);
+  assert.deepEqual(documentTreeRows(state, files, new Set(), '원본 양식').map(row => row.documentId).filter(Boolean), ['parent', 'attachment']);
+});

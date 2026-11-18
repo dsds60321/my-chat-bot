@@ -79,3 +79,33 @@ test('inline image rendering accepts image data only and ignores detached answer
   await displaySourceImage(image, 'data:image/png;base64,YWJj');
   assert.equal(image.src, '');
 });
+
+
+test('compact download rows deduplicate current identities and only preview after a click', async () => {
+  class Node extends EventTarget {
+    children = []; textContent = ''; hidden = false; attributes = new Map();
+    append(...nodes) { this.children.push(...nodes); }
+    replaceChildren(...nodes) { this.children = nodes; }
+    setAttribute(key, value) { this.attributes.set(key, value); }
+  }
+  const old = globalThis.document;
+  globalThis.document = { createElement() { return new Node(); } };
+  try {
+    const { renderDownloadFiles, sourceDownloadFiles } = await import('../src/sources.ts');
+    const file = { documentId: 'a'.repeat(64), version: 'b'.repeat(64), filename: '원본 양식.xlsx', description: '', image: false, bytes: 4096 };
+    const current = { ...file, version: 'c'.repeat(64) };
+    const inputs = safeSources([{ title: '설명', path: 'common/안내.md', attachments: [file] }, { title: '중복', path: 'common/다른.md', attachments: [file, current] }]);
+    assert.deepEqual(sourceDownloadFiles(inputs), [file, current]);
+    const container = new Node(); const downloads = []; let previews = 0;
+    renderDownloadFiles(container, inputs, value => downloads.push(value), async () => { previews++; if (previews === 1) throw new Error('retry'); });
+    assert.equal(container.children.length, 2); assert.equal(previews, 0);
+    const row = container.children[0].children[0];
+    assert.equal(row.children[0].textContent, '원본 양식.xlsx');
+    assert.equal(row.children[1].textContent, '4 KB');
+    row.children[2].dispatchEvent(new Event('click')); assert.equal(downloads[0].documentId, file.documentId);
+    const button = row.children[3]; button.dispatchEvent(new Event('click')); await Promise.resolve(); await Promise.resolve();
+    assert.equal(previews, 1);
+    button.dispatchEvent(new Event('click')); button.dispatchEvent(new Event('click')); await Promise.resolve();
+    assert.equal(previews, 2);
+  } finally { globalThis.document = old; }
+});

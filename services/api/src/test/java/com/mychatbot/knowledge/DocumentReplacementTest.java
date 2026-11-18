@@ -97,7 +97,9 @@ class DocumentReplacementTest {
             assertThatThrownBy(() -> knowledge.previousVersion(doc.documentId(), doc.version(), new AccessContext("no", Set.of("other")))).hasMessageContaining("찾을");
             assertThatThrownBy(() -> knowledge.submitReplacement(request(doc), denied, upload("x.md", "safe"))).hasMessageContaining("찾을");
             assertThatThrownBy(() -> knowledge.submitReplacement(request(doc), user, upload("x.txt", "safe"))).hasMessageContaining("같은 형식");
-            assertThatThrownBy(() -> knowledge.submitReplacement(request(doc), user, upload("x.md", "api_key=synthetic_secret"))).hasMessageContaining("민감정보");
+            var withCredentialContent = knowledge.submitReplacement(request(doc), user, upload("x.md", "api_key=synthetic_secret"));
+            assertThat(withCredentialContent.state()).isEqualTo(KnowledgeProposal.State.PENDING_APPROVAL);
+            knowledge.withdrawProposal(withCredentialContent.id(), user.userId());
             var proposal = knowledge.submitReplacement(request(doc), user, upload("x.md", "# Safe\nPROPOSED_CONTENT"));
             Files.writeString(original, "# External\nEXTERNAL_EDIT");
             assertThatThrownBy(() -> knowledge.reviewProposal(proposal.id(), admin, KnowledgeProposal.State.APPROVED)).hasMessageContaining("변경");

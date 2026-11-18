@@ -138,13 +138,13 @@ class KnowledgeServiceTest {
         }
     }
 
-    @Test void completeSecretDocumentIsQuarantinedAndChangedDocumentRevokes() throws Exception {
+    @Test void documentContentDoesNotTriggerQuarantineAndUpdatesStayVersioned() throws Exception {
         Path doc = source("paye2u/table.md", "# Public\nPUBLIC_TOPIC harmless");
         try (var knowledge = service()) {
             assertThat(knowledge.search("PUBLIC_TOPIC", Set.of("paye2u"), 5)).isNotEmpty();
             Files.writeString(doc, "# Public\nPUBLIC_TOPIC harmless\napi_key = synthetic_sensitive_value_123");
-            assertThat(knowledge.search("PUBLIC_TOPIC", KnowledgeService.SUPPORTED_PROJECTS, 5)).isEmpty();
-            assertThat(knowledge.status().quarantine()).isEqualTo(1);
+            assertThat(knowledge.search("PUBLIC_TOPIC", KnowledgeService.SUPPORTED_PROJECTS, 5)).isNotEmpty();
+            assertThat(knowledge.status().quarantine()).isZero();
             assertThat(Files.readString(temp.resolve("index/manifest.json"))).doesNotContain("synthetic_sensitive_value_123");
             Files.writeString(doc, "# Public\nPUBLIC_TOPIC harmless again");
             assertThat(knowledge.search("PUBLIC_TOPIC", Set.of("paye2u"), 5)).isNotEmpty();
@@ -166,8 +166,9 @@ class KnowledgeServiceTest {
 
             var restricted = knowledge.status().documents().stream()
                     .filter(entry -> entry.path().endsWith(quarantined.getFileName().toString())).findFirst().orElseThrow();
-            assertThat(restricted.state()).isEqualTo("QUARANTINED");
-            assertThat(knowledge.download(restricted.documentId(), restricted.version(), KnowledgeService.SUPPORTED_PROJECTS)).isEmpty();
+            assertThat(restricted.state()).isEqualTo("ACTIVE");
+            assertThat(knowledge.download(restricted.documentId(), restricted.version(), Set.of("paye2u"))).isPresent();
+            assertThat(knowledge.download(restricted.documentId(), restricted.version(), Set.of("syslink"))).isEmpty();
 
             FileTime mtime = Files.getLastModifiedTime(doc);
             Files.writeString(doc, original.replace("alpha", "omega"));
@@ -318,17 +319,17 @@ class KnowledgeServiceTest {
                 sheet.createRow(1).createCell(0).setCellValue("paye2u syslink WBS_SHARED_PROCEDURE api_key=synthetic_secret");
                 try (var output = Files.newOutputStream(workbookPath)) { workbook.write(output); }
             }
-            assertThat(knowledge.search("WBS_SHARED_PROCEDURE", KnowledgeService.SUPPORTED_PROJECTS, 5)).isEmpty();
+            assertThat(knowledge.search("WBS_SHARED_PROCEDURE", KnowledgeService.SUPPORTED_PROJECTS, 5)).isNotEmpty();
             assertThat(knowledge.download(hit.documentId(), hit.version(), both)).isEmpty();
             assertThat(knowledge.status().documents()).filteredOn(entry -> entry.path().equals("E2U_WBS.xlsx"))
                     .singleElement().satisfies(entry -> {
-                        assertThat(entry.state()).isEqualTo("QUARANTINED");
-                        assertThat(knowledge.download(entry.documentId(), entry.version(), both)).isEmpty();
+                        assertThat(entry.state()).isEqualTo("ACTIVE");
+                        assertThat(knowledge.download(entry.documentId(), entry.version(), both)).isPresent();
                     });
         }
     }
 
-    @Test void excelCredentialColumnQuarantinesTheWholeWorkbook() throws Exception {
+    @Test void excelCredentialColumnsAreExtractedAndIndexed() throws Exception {
         Path workbookPath = source("paye2u/credentials.xlsx", "");
         try (var workbook = new XSSFWorkbook()) {
             var sheet = workbook.createSheet("Data");
@@ -340,11 +341,11 @@ class KnowledgeServiceTest {
             row.createCell(1).setCellValue("synthetic-only-123");
             try (var output = Files.newOutputStream(workbookPath)) { workbook.write(output); }
         }
-        assertThatThrownBy(() -> new DocumentExtractor().extract(workbookPath)).isInstanceOf(DocumentExtractor.Quarantined.class);
-        try (var knowledge = service()) { assertThat(knowledge.status().quarantine()).isEqualTo(1); }
+        assertThat(new DocumentExtractor().extract(workbookPath).text()).contains("Password", "synthetic-only-123");
+        try (var knowledge = service()) { assertThat(knowledge.status().quarantine()).isZero(); }
     }
 
-    @Test void docxCredentialTableQuarantinesTheWholeDocument() throws Exception {
+    @Test void docxCredentialTableIsExtracted() throws Exception {
         Path docx = source("paye2u/credentials.docx", "");
         try (var document = new org.apache.poi.xwpf.usermodel.XWPFDocument()) {
             var table = document.createTable(2, 2);
@@ -354,7 +355,7 @@ class KnowledgeServiceTest {
             table.getRow(1).getCell(1).setText("synthetic-only-123");
             try (var output = Files.newOutputStream(docx)) { document.write(output); }
         }
-        assertThatThrownBy(() -> new DocumentExtractor().extract(docx)).isInstanceOf(DocumentExtractor.Quarantined.class);
+        assertThat(new DocumentExtractor().extract(docx).text()).contains("Password", "synthetic-only-123");
     }
 
     @Test void policyRevisionRebuildsPersistedIndex() throws Exception {

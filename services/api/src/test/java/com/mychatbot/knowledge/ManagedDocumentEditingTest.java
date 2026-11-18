@@ -37,7 +37,7 @@ class ManagedDocumentEditingTest {
         return new KnowledgeService.Upload(path, "edited.md", "변경 파일");
     }
 
-    @Test void trustedOpaqueProvenanceDoesNotQuarantineButUserSensitiveDataStillDoes() throws Exception {
+    @Test void managedMetadataIsTrimmedWithoutRejectingUserDocumentData() throws Exception {
         String digest = "a".repeat(20) + "01012345678" + "b".repeat(33);
         String ownerId = "01012345-6789-4000-8000-000000000000";
         var owner = new KnowledgeProposal(ownerId, KnowledgeProposal.Kind.AMENDMENT, "user", digest, digest,
@@ -50,12 +50,12 @@ class ManagedDocumentEditingTest {
         assertThat(extractor.extractManagedMarkdown(file, raw -> KnowledgeService.managedIndexText(owner, raw)).text())
                 .contains("SAFE_PROVENANCE_LOOKUP").doesNotContain(digest).doesNotContain(ownerId);
         Files.writeString(file, text + "\n연락처 01012345678\n");
-        assertThatThrownBy(() -> extractor.extractManagedMarkdown(file, raw -> KnowledgeService.managedIndexText(owner, raw)))
-                .isInstanceOf(DocumentExtractor.Quarantined.class);
-        // A user-written lookalike metadata line does not match the ledger-bound value.
+        assertThat(extractor.extractManagedMarkdown(file, raw -> KnowledgeService.managedIndexText(owner, raw)).text())
+                .contains("01012345678");
+        // User-written metadata remains content rather than being confused with audit metadata.
         Files.writeString(file, "# Edited\n원본 버전: 01012345678\n");
-        assertThatThrownBy(() -> extractor.extractManagedMarkdown(file, raw -> KnowledgeService.managedIndexText(owner, raw)))
-                .isInstanceOf(DocumentExtractor.Quarantined.class);
+        assertThat(extractor.extractManagedMarkdown(file, raw -> KnowledgeService.managedIndexText(owner, raw)).text())
+                .contains("01012345678");
     }
 
     @Test void downloadedManagedFileWithSensitiveLookingAuditIdCanBeReplacedAndRestored() throws Exception {
@@ -82,9 +82,9 @@ class ManagedDocumentEditingTest {
             knowledge.restore(updated.documentId(), updated.version(), source.version(), true, admin);
             assertThat(Files.readAllBytes(root().resolve(source.path()))).isEqualTo(original);
             var restored = document(knowledge, owner.title());
-            assertThatThrownBy(() -> knowledge.submitReplacement(request(restored, "민감 교체", ""), admin,
-                    upload(new String(original, StandardCharsets.UTF_8) + "\n연락처 01012345678\n")))
-                    .hasMessageContaining("민감정보");
+            var personalReplacement = knowledge.submitReplacement(request(restored, "민감 교체", ""), admin,
+                    upload(new String(original, StandardCharsets.UTF_8) + "\n연락처 01012345678\n"));
+            assertThat(personalReplacement.state()).isEqualTo(KnowledgeProposal.State.APPROVED);
         }
     }
 

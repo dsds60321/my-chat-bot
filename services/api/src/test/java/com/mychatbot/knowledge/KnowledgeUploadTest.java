@@ -76,14 +76,18 @@ class KnowledgeUploadTest {
                 .value(bytes -> assertThat(bytes).isNotEmpty());
         account("curator").post().uri("/api/knowledge/admin/proposals/" + submitted.id() + "/approve")
                 .bodyValue(Map.of()).exchange().expectStatus().isOk();
-        account("editor").get().uri(query).exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$[0].attachments[0].filename").isEqualTo("취소 화면.png");
+        var current = account("editor").get().uri(query).exchange().expectStatus().isOk()
+                .expectBody(SearchHit[].class).returnResult().getResponseBody()[0].attachments().get(0);
+        assertThat(current.filename()).isEqualTo("취소 화면.png");
+        assertThat(current.documentId()).isNotEqualTo(image.documentId());
+        account("editor").get().uri("/api/sources/" + current.documentId() + "?version=" + current.version())
+                .exchange().expectStatus().isOk();
         account("editor").get().uri("/api/search?q=승인번호확인절차").exchange().expectStatus().isOk()
                 .expectBody().jsonPath("$[0].section").value(section -> assertThat(section.toString()).contains("매뉴얼.txt"));
         account("other").get().uri(source).exchange().expectStatus().isNotFound();
         account("editor").post().uri("/api/chat/stream").accept(MediaType.TEXT_EVENT_STREAM)
                 .bodyValue(Map.of("question", "취소입금확인")).exchange().expectStatus().isOk()
-                .expectBody(String.class).value(body -> assertThat(body).contains(image.documentId()));
+                .expectBody(String.class).value(body -> assertThat(body).contains(current.documentId()));
         account("editor").get().uri(source).exchange().expectStatus().isOk();
         account("editor").post().uri(proposals + "/" + submitted.id() + "/withdraw")
                 .bodyValue(Map.of()).exchange().expectStatus().isOk();

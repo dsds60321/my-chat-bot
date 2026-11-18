@@ -49,7 +49,9 @@ class KnowledgeProposalTest {
             var invalid = new KnowledgeProposalController.SubmitRequest("paye2u", null, null, "업무 안내",
                     "ONBOARDING_LOOKUP 확인", TextNode.valueOf("true"));
             assertCode(() -> knowledge.submit(invalid, author), "PROPOSAL_CONSENT_REQUIRED");
-            assertCode(() -> knowledge.submit(request("paye2u", null, "password=synthetic"), author), "SENSITIVE_INPUT");
+            var credentialContent = knowledge.submit(request("paye2u", null, "password=synthetic"), author);
+            assertThat(credentialContent.state()).isEqualTo(State.PENDING_APPROVAL);
+            knowledge.withdrawProposal(credentialContent.id(), author.userId());
             var pending = knowledge.submit(request("paye2u", null, "ONBOARDING_LOOKUP 확인"), author);
             assertThat(pending.state()).isEqualTo(State.PENDING_APPROVAL);
             assertThat(knowledge.search("ONBOARDING_LOOKUP", author.projects(), 4)).isEmpty();

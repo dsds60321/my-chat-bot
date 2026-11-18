@@ -6,7 +6,7 @@ import thinkingPetUrl from '../../../assets/pet/pet-thinking.png';
 import { PetMotion } from './pet-motion';
 import { streamChat, type Source } from './chat';
 import { LoginSession, AuthenticationError } from './session';
-import { safeSources, renderSources as showSources, sourceFile, type SourceFile } from './sources';
+import { safeSources, renderSources as showSources, renderDownloadFiles, sourceFile, type SourceFile } from './sources';
 import { openAnswer, closeAnswer, listenForSourceDownloads } from './popup';
 import { downloadSource, previewSource, readSourceImage } from './download';
 import { scrollingIndicator, scrollToEnd } from './scroll';
@@ -15,6 +15,7 @@ import { initializeWindow, native, resizeWindow, showAfterFailure, startDragging
 import { proposalIntent } from './knowledge';
 import { setupKnowledgePanel } from './knowledge-panel';
 import { setupDocumentChoices } from './document-choices';
+import { showFilePreview } from './file-preview';
 
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const pet = element<HTMLButtonElement>('pet');
@@ -88,30 +89,35 @@ const documentAnswers = setupDocumentChoices(element('document-choices'), {
     void previewSource(file, session, image).catch(error => announce(error instanceof Error ? error.message : '이미지를 열지 못했어요.'));
   },
   read: openAnswer,
+  previewFile,
 });
 function renderDocumentChoices(items: unknown): void {
   documentChoices = safeSources(items).filter(item => sourceFile(item));
   documentAnswers.show(lastQuestion, documentChoices);
+  renderDownloadFiles(element('answer-files'), documentChoices, file => { void saveSource(file); }, previewFile);
   element('document-choices').inert = Boolean(request);
+}
+async function previewFile(file: import('./sources').Attachment, area: HTMLElement): Promise<void> {
+  const signal = imagePreview.signal;
+  await showFilePreview(area, file, session, signal).catch(error => {
+    if (!signal.aborted) area.textContent = error instanceof Error ? error.message : '미리보기를 불러오지 못했어요.';
+    throw error;
+  });
 }
 function renderSources(items: unknown): void {
   imagePreview.abort();
   imagePreview = new AbortController();
   const signal = imagePreview.signal;
   sources = safeSources(items);
+  renderDownloadFiles(element('answer-files'), sources.length ? sources : documentChoices, file => { void saveSource(file); }, previewFile);
   showSources(element<HTMLUListElement>('sources'), sources, file => { void saveSource(file); }, (file, image) => {
     if (request) { announce('답변이 끝난 뒤 이미지를 열어 주세요.'); return; }
     void previewSource(file, session, image, undefined, signal).catch(error => {
       if (!signal.aborted) announce(error instanceof Error ? error.message : '이미지를 열지 못했어요.');
     });
-  }, !request);
+  }, false, false);
 }
 async function saveSource(source: SourceFile): Promise<string> {
-  if (request) {
-    const message = '답변이 끝난 뒤 파일을 다운로드해 주세요.';
-    announce(message);
-    return message;
-  }
   announce('파일 사본을 다운로드하고 있어요.');
   const message = await downloadSource(source, session).catch(error =>
     error instanceof Error && !(error instanceof TypeError) ? error.message : typeof error === 'string' ? error : '출처 파일을 다운로드하지 못했어요.');
@@ -355,7 +361,6 @@ async function executeQuestion(question: string, selected?: SourceFile): Promise
     if (!completed && answer.trim() && !documentChoices.length) element('answer-provider').textContent = '부분 답변';
     request = null;
     busy(false);
-    if (session.active && !session.local) renderSources(sources);
     if (open) focusInput();
   }
 }

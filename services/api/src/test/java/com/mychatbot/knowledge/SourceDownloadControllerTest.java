@@ -61,4 +61,32 @@ class SourceDownloadControllerTest {
                 .headers(h -> h.setBasicAuth("developer", "temporary-test-password"))
                 .exchange().expectStatus().isNotFound().expectBody().isEmpty();
     }
+    @Autowired RequestLimiter chatLimiter;
+
+    @Test void downloadCanCompleteWhileSameUserHasAnActiveChatRequest() {
+        when(catalog.projects()).thenReturn(Set.of("paye2u"));
+        String id = "4".repeat(64), version = "5".repeat(64);
+        when(knowledge.download(id, version, new AccessContext("developer", Set.of("paye2u"), true)))
+                .thenReturn(Optional.of(new KnowledgeService.SourceFile("양식.xlsx", new byte[] {1, 2, 3})));
+        try (var lease = chatLimiter.acquire("developer")) {
+            client.get().uri("/api/sources/" + id + "?version=" + version)
+                    .headers(h -> h.setBasicAuth("developer", "temporary-test-password"))
+                    .exchange().expectStatus().isOk();
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> chatLimiter.acquire("developer"))
+                    .isInstanceOf(com.mychatbot.ai.AiException.class);
+        }
+    }
+
+    @Test void independentDownloadLimiterStillEnforcesItsOwnBudget() {
+        var controller = new SourceDownloadController(knowledge, 1);
+        var auth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("bounded", "unused",
+                java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("PROJECT_paye2u")));
+        String id = "6".repeat(64), version = "7".repeat(64);
+        when(knowledge.download(id, version, new AccessContext("bounded", Set.of("paye2u"))))
+                .thenReturn(Optional.of(new KnowledgeService.SourceFile("양식.txt", new byte[] {1})));
+        assertThat(controller.download(id, version, auth).block().getStatusCode().value()).isEqualTo(200);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.download(id, version, auth).block())
+                .isInstanceOf(com.mychatbot.ai.AiException.class).hasMessageContaining("분당 요청 한도");
+    }
+
 }

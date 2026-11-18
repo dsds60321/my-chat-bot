@@ -4,7 +4,7 @@ import { authorization, AuthenticationError, type LoginSession } from './session
 import { apiBaseUrl } from './api.ts';
 
 export interface BrowsableDocument extends DocumentTarget {
-  type: string; bytes: number; modified: number; replaceable?: boolean;
+  type: string; bytes: number; modified: number; replaceable?: boolean; attachments?: BrowsableDocument[];
 }
 export interface DocumentVersion { version: string; filename: string; createdAt: string }
 export type DocumentPreview = { kind: 'text'; text: string; message?: string }
@@ -12,15 +12,23 @@ export type DocumentPreview = { kind: 'text'; text: string; message?: string }
   | { kind: 'pdf' | 'unavailable'; message?: string };
 
 export function browsableDocuments(value: unknown): BrowsableDocument[] {
-  if (!Array.isArray(value) || value.length > 10000) throw new Error('파일 목록을 읽지 못했어요.');
-  const files = value.map(item => {
-    if (!sourceFile(item) || typeof item.path !== 'string' || !item.path || item.path.length > 2000
-      || typeof item.title !== 'string' || typeof item.project !== 'string' || typeof item.type !== 'string'
-      || !Number.isSafeInteger(item.bytes) || item.bytes < 0 || !Number.isSafeInteger(item.modified) || item.modified < 0
-      || (item.replaceable !== undefined && typeof item.replaceable !== 'boolean')) throw new Error('파일 목록을 읽지 못했어요.');
-    return item as BrowsableDocument;
-  });
-  return files;
+  const invalid = () => new Error('파일 목록을 읽지 못했어요.');
+  if (!Array.isArray(value) || value.length > 10000) throw invalid();
+  const parse = (item: unknown, child = false): BrowsableDocument => {
+    if (!item || typeof item !== 'object') throw invalid();
+    const file = item as BrowsableDocument;
+    if (!sourceFile(file) || typeof file.path !== 'string' || !file.path || file.path.length > 2000
+      || typeof file.title !== 'string' || file.title.length > 1000 || typeof file.project !== 'string' || typeof file.type !== 'string'
+      || !Number.isSafeInteger(file.bytes) || file.bytes < 0 || !Number.isSafeInteger(file.modified) || file.modified < 0
+      || (file.replaceable !== undefined && typeof file.replaceable !== 'boolean')
+      || (file.attachments !== undefined && (!Array.isArray(file.attachments) || file.attachments.length > (child ? 0 : 3)))) throw invalid();
+    const attachments = file.attachments?.map(attachment => parse(attachment, true));
+    return { documentId: file.documentId, version: file.version, path: file.path, title: file.title,
+      project: file.project, type: file.type, bytes: file.bytes, modified: file.modified,
+      ...(file.replaceable === undefined ? {} : { replaceable: file.replaceable }),
+      ...(attachments?.length ? { attachments } : {}) };
+  };
+  return value.map(item => parse(item));
 }
 export function documentPreview(value: unknown): DocumentPreview {
   if (!value || typeof value !== 'object' || !('kind' in value)
@@ -40,12 +48,13 @@ export function documentVersions(value: unknown): DocumentVersion[] {
 }
 export function replacementFile(file: Pick<File, 'name' | 'size'> | undefined, target: DocumentTarget | null): string | null {
   if (!target) return '왼쪽 목록에서 교체할 파일을 선택해 주세요.';
+  if ('replaceable' in target && target.replaceable === false) return '이 파일은 다운로드와 미리보기만 지원해요.';
   if (!file || file.size < 1 || file.size > 8 * 1024 * 1024) return '수정 파일은 1개, 8MB 이하로 올려 주세요.';
   const extension = (name: string) => /\.([^.]+)$/.exec(name)?.[1].toLowerCase();
   if (!extension(target.path) || extension(file.name) !== extension(target.path)) return '원본과 같은 확장자의 수정 파일을 올려 주세요.';
   return null;
 }
-export async function previewPdf(session: LoginSession, file: DocumentTarget, signal: AbortSignal): Promise<Blob> {
+export async function previewPdf(session: LoginSession, file: Pick<DocumentTarget, 'documentId' | 'version'>, signal: AbortSignal): Promise<Blob> {
   const account = session.auth();
   const response = await fetch(`${apiBaseUrl}/api/knowledge/documents/${file.documentId}/preview/pdf?version=${file.version}`, {
     signal, credentials: 'omit', cache: 'no-store', redirect: 'error',

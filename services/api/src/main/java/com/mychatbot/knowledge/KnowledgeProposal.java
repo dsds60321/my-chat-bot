@@ -17,7 +17,11 @@ public record KnowledgeProposal(String id, Kind kind, String project, String sou
                 createdAt, updatedAt, attachments, kind == Kind.NEW ? project : null);
     }
 
-    public record Attachment(String documentId, String version, String filename, String description, boolean image) {}
+    public record Attachment(String documentId, String version, String filename, String description, boolean image, long bytes) {
+        public Attachment(String documentId, String version, String filename, String description, boolean image) {
+            this(documentId, version, filename, description, image, 0);
+        }
+    }
 
     public enum Kind { NEW, AMENDMENT, REPLACEMENT }
     public enum State { PENDING_APPROVAL, APPROVED, REJECTED, WITHDRAWN }

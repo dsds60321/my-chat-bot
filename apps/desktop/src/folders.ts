@@ -50,7 +50,7 @@ export function folderCreation(parentPath: string, name: string): { parentPath: 
 }
 
 export type DocumentTreeRow = FolderRow & { kind: 'folder' | 'file'; documentId?: string };
-export function documentTreeRows(catalog: FolderCatalog, files: { path: string; documentId: string }[], expanded: Set<string>, query = ''): DocumentTreeRow[] {
+export function documentTreeRows(catalog: FolderCatalog, files: { path: string; documentId: string; attachments?: { path: string; documentId: string; title: string }[] }[], expanded: Set<string>, query = ''): DocumentTreeRow[] {
   const folders = folderRows(catalog, new Set(catalog.folders));
   const actual = new Set(catalog.folders);
   const all: DocumentTreeRow[] = folders.map(row => ({ ...row, kind: 'folder', children: row.children || files.some(file => file.path.startsWith(row.path + '/')) }));
@@ -58,13 +58,18 @@ export function documentTreeRows(catalog: FolderCatalog, files: { path: string; 
     const parts = file.path.split('/'); const parent = parts.slice(0, -1).join('/');
     if (parent && (!actual.has(parent) || parts.slice(0, -1).some((_, index) => !actual.has(parts.slice(0, index + 1).join('/'))))) continue;
     all.push({ kind: 'file', path: file.path, name: parts.at(-1)!, depth: parts.length - 1, children: false, pending: false, documentId: file.documentId });
+    for (const child of file.attachments ?? []) {
+      all.push({ kind: 'file', path: file.path + '/' + child.title, name: child.title, depth: parts.length,
+        children: false, pending: false, documentId: child.documentId });
+    }
   }
   const filter = query.trim().normalize('NFC').toLocaleLowerCase();
   const matching = all.filter(row => row.path.normalize('NFC').toLocaleLowerCase().includes(filter));
   return all.filter(row => {
     if (filter) return matching.some(match => match.path === row.path || match.path.startsWith(row.path + '/'));
     const parts = row.path.split('/');
-    return parts.slice(0, -1).every((_, index) => expanded.has(parts.slice(0, index + 1).join('/')));
+    return parts.slice(0, -1).every((_, index) => { const parent = parts.slice(0, index + 1).join('/');
+      return expanded.has(parent) || all.some(item => item.kind === 'file' && item.path === parent); });
   }).sort((a, b) => {
     const left = a.path.split('/'); const right = b.path.split('/');
     for (let i = 0; i < Math.min(left.length, right.length); i++) {

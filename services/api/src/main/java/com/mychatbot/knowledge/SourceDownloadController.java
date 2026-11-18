@@ -22,9 +22,10 @@ public class SourceDownloadController {
     private final KnowledgeService knowledge;
     private final RequestLimiter limiter;
 
-    public SourceDownloadController(KnowledgeService knowledge, RequestLimiter limiter) {
+    public SourceDownloadController(KnowledgeService knowledge,
+            @org.springframework.beans.factory.annotation.Value("${pet.api.requests-per-minute:12}") int requestsPerMinute) {
         this.knowledge = knowledge;
-        this.limiter = limiter;
+        this.limiter = new RequestLimiter(requestsPerMinute);
     }
 
     @GetMapping("/api/sources/{documentId}")

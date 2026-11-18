@@ -1,7 +1,7 @@
 import type { StreamEvent } from './chat.ts';
 import { AuthenticationError } from './session.ts';
 import {
-  safeSources, sourceFile, sourceName, renderSources, snapshotText,
+  safeSources, sourceFile, sourceName, renderSources, renderDownloadFiles, snapshotText,
   type AnswerSnapshot, type Attachment, type SourceFile,
 } from './sources.ts';
 
@@ -10,6 +10,7 @@ interface Actions {
   download(file: SourceFile): void;
   preview(file: Attachment, image: HTMLImageElement): void;
   read(snapshot: AnswerSnapshot): Promise<void>;
+  previewFile?(file: Attachment, area: HTMLElement): void | Promise<void>;
 }
 
 export function setupDocumentChoices(container: HTMLElement, actions: Actions) {
@@ -36,6 +37,8 @@ export function setupDocumentChoices(container: HTMLElement, actions: Actions) {
       detail.textContent = [source.title, source.section, source.row ? `행 ${source.row}` : ''].filter(Boolean).join(' · ');
       summary.append(detail);
       const answer = document.createElement('p'); answer.className = 'answer';
+      const downloads = document.createElement('div'); downloads.className = 'compact-file-list';
+      renderDownloadFiles(downloads, [source], actions.download, actions.previewFile);
       const status = document.createElement('p'); status.className = 'status'; status.setAttribute('role', 'status');
       const files = document.createElement('ul'); files.className = 'sources'; files.hidden = true;
       const tools = document.createElement('div'); tools.className = 'request-actions';
@@ -43,7 +46,7 @@ export function setupDocumentChoices(container: HTMLElement, actions: Actions) {
       const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = '복사'; copy.disabled = true;
       const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = '다시 시도'; retry.hidden = true;
       tools.append(read, copy, retry);
-      section.append(summary, answer, files, tools, status);
+      section.append(summary, downloads, answer, files, tools, status);
       container.append(section); sections.push(section);
       let snapshot: AnswerSnapshot = { answer: '', sources: [], partial: true };
       let complete = false;
@@ -71,7 +74,10 @@ export function setupDocumentChoices(container: HTMLElement, actions: Actions) {
               if (event.event === 'delta' && typeof event.data.text === 'string') {
                 snapshot.answer += event.data.text; answer.textContent = snapshot.answer;
               }
-              if (event.event === 'sources') snapshot.sources = safeSources(event.data.items);
+              if (event.event === 'sources') {
+                snapshot.sources = safeSources(event.data.items);
+                renderDownloadFiles(downloads, snapshot.sources, actions.download, actions.previewFile);
+              }
             });
             if (generation !== current) return;
             if (!snapshot.answer.trim()) throw new Error('답변을 받지 못했어요. 다시 시도해 주세요.');
@@ -85,7 +91,7 @@ export function setupDocumentChoices(container: HTMLElement, actions: Actions) {
             if (active === controller) active = null;
             if (generation === current) {
               read.disabled = !snapshot.answer.trim(); copy.disabled = read.disabled;
-              renderSources(files, snapshot.sources, actions.download, actions.preview);
+              renderSources(files, snapshot.sources, actions.download, actions.preview, false, false);
             }
           }
         });

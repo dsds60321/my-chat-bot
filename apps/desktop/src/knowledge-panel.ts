@@ -54,9 +54,10 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
   let operation: AbortController | null = null;
   let target: BrowsableDocument | null = null;
   let draft: ProposalDraft | null = null;
-  const preview = setupDocumentPreview(session, run, file => {
-    documentFiles = documentFiles.map(prior => prior.documentId === file.documentId ? file : prior);
-    chooseFile(file);
+  const preview = setupDocumentPreview(session, run, (file, expandPreview) => {
+    documentFiles = documentFiles.map(prior => prior.documentId === file.documentId ? file :
+      { ...prior, ...(prior.attachments ? { attachments: prior.attachments.map(child => child.documentId === file.documentId ? file : child) } : {}) });
+    chooseFile(file, expandPreview);
   }, announce, expire);
   scrollingIndicator(panel);
 
@@ -78,9 +79,10 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
     target = null; preview.reset(); clearUploads(); clearDraft(); updateTargetHelp();
   }
   function updateTargetHelp(): void {
+    const parent = target && documentFiles.find(file => file.attachments?.some(child => child.documentId === target!.documentId));
     element('proposal-target-help').textContent = kind.value === 'new'
       ? '왼쪽에서 폴더를 선택한 후 새 문서를 작성해 주세요.'
-      : target ? `대상 파일: ${target.path} · 원본을 다운로드해 직접 수정한 뒤 교체해 주세요.` : '왼쪽 목록에서 교체할 파일을 선택해 주세요. 원본을 다운로드해 직접 수정한 뒤 올려 주세요.';
+      : target?.replaceable === false ? '이 첨부파일은 다운로드와 미리보기만 지원합니다.' : target ? `대상 파일: ${parent ? target.title + ' · 연결 문서: ' + parent.title : target.path} · 원본을 다운로드해 직접 수정한 뒤 교체해 주세요.` : '왼쪽 목록에서 교체할 파일을 선택해 주세요. 원본을 다운로드해 직접 수정한 뒤 올려 주세요.';
   }
   function showKind(): void {
     const isReplacement = kind.value === 'replace';
@@ -90,7 +92,9 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
     element('proposal-preview').hidden = isReplacement;
     element('proposal-instruction-label').hidden = isReplacement;
     instruction.hidden = isReplacement; instruction.disabled = isReplacement; instruction.required = !isReplacement;
-    if (kind.value === 'new') { target = null; preview.reset(); folderSearch.value = ''; }
+    if (kind.value === 'new') {
+      target = null; preview.reset(); folderSearch.value = ''; setFolderScope(selectedFolder);
+    }
     clearDraft(); clearUploads(); updateTargetHelp(); report(''); renderFolders();
   }
   function setView(next: View | null): void {
@@ -150,20 +154,24 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
     }
     setFolderScope(path); report('');
   }
-  function chooseFile(file: BrowsableDocument): void {
+  function chooseFile(file: BrowsableDocument, expandPreview?: boolean): void {
+    const owner = documentFiles.find(parent => parent.attachments?.some(child => child.documentId === file.documentId));
+    const attached = !!owner;
     const changed = target?.documentId !== file.documentId || target?.version !== file.version;
     if (changed) {
       if (target && kind.value !== 'new') instruction.value = '';
       clearDraft(); clearUploads();
     }
-    target = file; setFolderScope(file.path.substring(0, file.path.lastIndexOf('/')));
+    const folderPath = (owner ?? file).path;
+    target = file; setFolderScope(folderPath.substring(0, folderPath.lastIndexOf('/')));
+    if (owner) element('folder-breadcrumb').textContent = `${owner.path.substring(0, owner.path.lastIndexOf('/'))} / ${owner.title} / 첨부파일`;
     const parts = selectedFolder.split('/');
     for (let i = 1; i <= parts.length; i++) expanded.add(parts.slice(0, i).join('/'));
     replacement.accept = '.' + file.type;
     updateReplacementSubmit(); updateTargetHelp(); report('');
     folderCreate.hidden = true; renderFolders();
     tree.querySelector<HTMLButtonElement>(`[data-document="${file.documentId}"]`)?.focus();
-    if (changed) void preview.show(file);
+    if (changed || expandPreview !== undefined) void preview.show(file, expandPreview ?? (!attached && !file.attachments?.length));
     else element<HTMLDetailsElement>('document-preview').open = true;
   }
   function renderFolders(): void {
@@ -176,14 +184,22 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
     tree.setAttribute('aria-label', isNew ? '접근 가능한 프로젝트 및 폴더' : '접근 가능한 프로젝트, 폴더 및 파일');
     folderPanel.querySelector('.folder-note')!.textContent = isNew
       ? '문서를 추가할 폴더를 선택해 주세요.' : '접근 가능한 폴더와 파일만 표시됩니다. 파일을 선택하면 오른쪽에서 미리 볼 수 있어요.';
-    const rows = documentTreeRows(catalog, isNew ? [] : documentFiles, expanded, folderSearch.value);
+    const ownedFolders = new Set(documentFiles.flatMap(file => (file.attachments ?? []).map(child => child.path.substring(0, child.path.lastIndexOf('/')))));
+    const hiddenFolders = new Set(ownedFolders);
+    for (const path of ownedFolders) {
+      const parent = path.substring(0, path.lastIndexOf('/'));
+      if (!documentFiles.some(file => file.path.startsWith(parent + '/'))
+          && !catalog.folders.some(folder => folder.startsWith(parent + '/') && !ownedFolders.has(folder))) hiddenFolders.add(parent);
+    }
+    const visibleCatalog = { ...catalog, folders: catalog.folders.filter(path => !hiddenFolders.has(path)) };
+    const rows = documentTreeRows(visibleCatalog, isNew ? [] : documentFiles, expanded, folderSearch.value);
     if (!rows.length) tree.append(text('p', folderSearch.value ? `${label} 검색 결과가 없어요.` : `접근 가능한 ${label} 목록이 비어 있어요.`, 'status'));
     for (const row of rows) {
       const item = document.createElement('li');
       if (row.kind === 'file') {
-        const file = documentFiles.find(file => file.documentId === row.documentId)!;
+        const file = documentFiles.flatMap(parent => [parent, ...(parent.attachments ?? [])]).find(file => file.documentId === row.documentId)!;
         const button = document.createElement('button'); button.type = 'button'; button.className = 'document-file';
-        button.style.setProperty('--folder-depth', String(row.depth)); button.textContent = row.name; button.title = row.path;
+        button.style.setProperty('--folder-depth', String(row.depth)); button.textContent = row.name; button.title = file.path;
         button.dataset.document = file.documentId;
         const info = document.createElement('small'); info.textContent = `${file.type.toUpperCase()} · ${new Date(file.modified).toLocaleDateString('ko-KR')}`; button.append(info);
         if (target?.documentId === file.documentId) button.setAttribute('aria-current', 'true');

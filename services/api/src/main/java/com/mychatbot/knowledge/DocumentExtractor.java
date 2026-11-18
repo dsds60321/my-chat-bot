@@ -65,9 +65,8 @@ final class DocumentExtractor {
         return extracted(path.getFileName().toString(), "md", text, markdown(text));
     }
 
-    private Extracted extracted(String name, String type, String text, List<Chunk> chunks) throws Quarantined {
+    private Extracted extracted(String name, String type, String text, List<Chunk> chunks) {
         if (text.length() > MAX_CHARS) throw new IllegalArgumentException("text-size-limit");
-        if (!SensitiveData.guard(text)) throw new Quarantined();
         String title = text.lines().filter(line -> line.startsWith("# ")).findFirst()
             .map(line -> line.substring(2).strip()).orElse(name);
         if (title.length() > 240) title = title.substring(0, 240);
@@ -155,7 +154,6 @@ final class DocumentExtractor {
                 int taskColumn = -1;
                 int group = -1;
                 int previousRow = -2;
-                java.util.Set<Integer> sensitiveColumns = new java.util.HashSet<>();
                 for (Row row : sheet) {
                     if (row.getLastCellNum() > 1000) throw new IllegalArgumentException("column-limit");
                     StringBuilder line = new StringBuilder("Row ").append(row.getRowNum() + 1).append(": ");
@@ -164,9 +162,6 @@ final class DocumentExtractor {
                     for (Cell cell : row) {
                         if (++cells > 100000) throw new IllegalArgumentException("cell-limit");
                         String value = formatter.formatCellValue(cell);
-                        if (sensitiveColumns.contains(cell.getColumnIndex()) && !value.isBlank() && !SensitiveData.sensitiveHeader(value))
-                            throw new Quarantined();
-                        if (SensitiveData.sensitiveHeader(value)) sensitiveColumns.add(cell.getColumnIndex());
                         if (value.isBlank() && cell.getCellType() != CellType.FORMULA) continue;
                         values.put(cell.getColumnIndex(), value);
                         shortLabels &= value.length() <= 60 && !value.contains("\n") && cell.getCellType() != CellType.FORMULA;
@@ -293,5 +288,4 @@ final class DocumentExtractor {
         return result;
     }
 
-    static final class Quarantined extends Exception { }
 }

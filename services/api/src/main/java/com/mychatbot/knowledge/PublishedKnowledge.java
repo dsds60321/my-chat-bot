@@ -79,7 +79,16 @@ final class PublishedKnowledge {
 
     Optional<String> owner(String path) {
         if (publications == null) return Optional.empty();
-        return publications.keySet().stream().filter(id -> bodyPath(id).filter(path::equals).isPresent()).findFirst();
+        return publications.values().stream().filter(publication -> publication.files().stream().anyMatch(file -> file.path().equals(path)))
+                .map(Publication::id).findFirst();
+    }
+
+    Optional<String> attachmentPath(String id, int position) {
+        Publication publication = publications == null ? null : publications.get(id);
+        if (publication == null) return Optional.empty();
+        String prefix = (publication.folder().isEmpty() ? "" : publication.folder() + "/") + "attachments/" + id + "/" + (position + 1) + "--";
+        List<String> paths = publication.files().stream().map(OwnedFile::path).filter(path -> path.startsWith(prefix)).toList();
+        return paths.size() == 1 ? Optional.of(paths.get(0)) : Optional.empty();
     }
 
     boolean hasArchivedBody(String id) throws IOException {
@@ -128,16 +137,39 @@ final class PublishedKnowledge {
             for (OwnedFile owned : publication.files()) {
                 Path file = root.resolve(owned.path());
                 KnowledgeService.rejectSymlinkParents(file);
-                if (bodyPath(proposal.id()).filter(owned.path()::equals).isPresent()) {
-                    if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) > DocumentExtractor.MAX_BYTES) return false;
-                } else if (!matches(file, owned.version())) return false;
+                if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) > DocumentExtractor.MAX_BYTES) return false;
             }
-            for (var attachment : proposal.attachments()) {
+            Set<String> expected = new HashSet<>();
+            for (int position = 0; position < proposal.attachments().size(); position++) {
+                var attachment = proposal.attachments().get(position);
+                String path = attachmentPath(proposal.id(), position).orElse(null);
+                if (path == null || !expected.add(path) || Files.size(root.resolve(path)) > AttachmentImage.MAX_BYTES
+                        || (attachment.image() && !matches(root.resolve(path), attachment.version()))) return false;
                 if (!attachment.documentId().matches("[0-9a-f]{64}") || !attachment.version().matches("[0-9a-f]{64}")
                         || !matches(store.resolve("attachments").resolve(attachment.documentId()), attachment.version())) return false;
             }
+            Path group = root.resolve((publication.folder().isEmpty() ? "" : publication.folder() + "/") + "attachments/" + proposal.id());
+            KnowledgeService.rejectSymlinkParents(group);
+            if (Files.exists(group, LinkOption.NOFOLLOW_LINKS)) {
+                if (!Files.isDirectory(group, LinkOption.NOFOLLOW_LINKS)) return false;
+                try (var files = Files.list(group)) {
+                    for (Path file : files.toList()) if (!knownPath(file, root, expected)) return false;
+                }
+            }
             return true;
         } catch (IOException ex) { return false; }
+    }
+
+    private boolean knownPath(Path file, Path base, Set<String> expected) throws IOException {
+        KnowledgeService.rejectSymlinkParents(file);
+        String relative = base.relativize(file).toString().replace('\\', '/');
+        if (expected.contains(relative)) return true;
+        String normalized = java.text.Normalizer.normalize(relative, java.text.Normalizer.Form.NFC);
+        for (String known : expected) {
+            if (normalized.equals(java.text.Normalizer.normalize(known, java.text.Normalizer.Form.NFC))
+                    && Files.isSameFile(file, base.resolve(known))) return true;
+        }
+        return false;
     }
 
     void publish(KnowledgeProposal proposal, String folder) throws IOException {
@@ -226,7 +258,7 @@ final class PublishedKnowledge {
         for (OwnedFile owned : publication.files()) {
             Path path = root.resolve(owned.path());
             KnowledgeService.rejectSymlinkParents(path);
-            if (bodyPath(id).filter(owned.path()::equals).isPresent() && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+            if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
                 if (Files.size(path) > DocumentExtractor.MAX_BYTES) throw new IOException("publication-body-limit");
                 current.add(new OwnedFile(owned.path(), hash(Files.readAllBytes(path))));
             } else current.add(owned);
@@ -292,7 +324,7 @@ final class PublishedKnowledge {
                     Path relative = archived.relativize(path);
                     if (!attributes.isRegularFile() || relative.getNameCount() < 2
                             || !relative.getName(0).toString().matches("[0-9a-f]{64}")
-                            || !ownedPath(owned, relative.subpath(1, relative.getNameCount()).toString().replace('\\', '/'))) {
+                            || !knownPath(path, archived.resolve(relative.getName(0)), owned.files().stream().map(OwnedFile::path).collect(java.util.stream.Collectors.toSet()))) {
                         throw new IOException("publication-history-path-invalid");
                     }
                     Files.delete(path);
