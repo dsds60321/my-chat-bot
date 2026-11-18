@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.zip.ZipFile;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellType;
@@ -22,6 +23,7 @@ import org.apache.tika.extractor.EmbeddedDocumentExtractor;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.parser.ParseContext;
 import org.apache.tika.parser.microsoft.ooxml.OOXMLParser;
+import org.apache.tika.parser.microsoft.OfficeParser;
 import org.apache.tika.parser.pdf.PDFParser;
 import org.apache.tika.parser.pdf.PDFParserConfig;
 import org.apache.tika.sax.BodyContentHandler;
@@ -41,17 +43,29 @@ final class DocumentExtractor {
     Extracted extract(Path path, String name) throws Exception {
         String type = extension(name);
         if (Files.size(path) > MAX_BYTES) throw new IllegalArgumentException("file-size-limit");
-        if (type.equals("xlsx") || type.equals("docx")) checkZip(path);
+        if (type.equals("xlsx") || type.equals("docx") || type.equals("pptx")) checkZip(path);
         List<Chunk> chunks;
         String text;
         if (type.equals("xlsx") || type.equals("xls")) {
             chunks = excel(path);
             text = String.join("\n", chunks.stream().map(Chunk::text).toList());
         } else {
-            text = type.equals("docx") || type.equals("pdf") ? tika(path, type) : readText(path);
+            text = Set.of("docx", "doc", "pptx", "ppt", "pdf").contains(type) ? tika(path, type) : readText(path);
             if (text.length() > MAX_CHARS) throw new IllegalArgumentException("text-size-limit");
             chunks = markdown(text);
         }
+        return extracted(name, type, text, chunks);
+    }
+
+    Extracted extractManagedMarkdown(Path path, java.util.function.UnaryOperator<String> indexText) throws Exception {
+        if (Files.size(path) > MAX_BYTES) throw new IllegalArgumentException("file-size-limit");
+        String text = readText(path);
+        if (text.length() > MAX_CHARS) throw new IllegalArgumentException("text-size-limit");
+        text = indexText.apply(text);
+        return extracted(path.getFileName().toString(), "md", text, markdown(text));
+    }
+
+    private Extracted extracted(String name, String type, String text, List<Chunk> chunks) throws Quarantined {
         if (text.length() > MAX_CHARS) throw new IllegalArgumentException("text-size-limit");
         if (!SensitiveData.guard(text)) throw new Quarantined();
         String title = text.lines().filter(line -> line.startsWith("# ")).findFirst()
@@ -107,7 +121,8 @@ final class DocumentExtractor {
         pdfConfig.setExtractInlineImages(false);
         context.set(PDFParserConfig.class, pdfConfig);
         try (InputStream input = Files.newInputStream(path)) {
-            var parser = type.equals("pdf") ? new PDFParser() : new OOXMLParser();
+            org.apache.tika.parser.Parser parser = type.equals("pdf") ? new PDFParser()
+                    : Set.of("doc", "ppt").contains(type) ? new OfficeParser() : new OOXMLParser();
             parser.parse(input, handler, new Metadata(), context);
         }
         return handler.toString();

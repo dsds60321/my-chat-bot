@@ -1,8 +1,8 @@
 import { authorization, AuthenticationError, type LoginSession } from './session.ts';
 import { apiBaseUrl } from './api.ts';
-import { sourceFile, type Attachment } from './sources.ts';
+import type { Attachment } from './sources.ts';
 
-export type ProposalKind = 'NEW' | 'AMENDMENT';
+export type ProposalKind = 'NEW' | 'AMENDMENT' | 'REPLACEMENT';
 export type ProposalState = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN';
 export interface DocumentTarget { documentId: string; version: string; project: string; title: string; path: string }
 interface ProposalScope { project: string; sourceDocumentId?: string; sourceVersion?: string; folderPath?: string }
@@ -13,12 +13,12 @@ export interface Proposal extends ProposalDraft {
   id: string; author: string; state: ProposalState; createdAt: string; updatedAt: string; attachments?: Attachment[];
 }
 
-export function proposalIntent(question: string): { kind: ProposalKind; instruction: string; query: string } | null {
+export function proposalIntent(question: string): { kind: 'NEW' | 'REPLACEMENT'; instruction: string; query: string } | null {
   const input = question.trim();
   const command = /^(\/수정|\/새문서)(?=\s|$)/.exec(input);
   const instruction = command ? input.slice(command[0].length).trim() : input;
   const filename = /[^\s"'<>]*\.(?:md|txt|pdf|docx|xlsx|pptx|csv|sql)\b/i.exec(instruction)?.[0] ?? '';
-  if (command) return { kind: command[1] === '/수정' ? 'AMENDMENT' : 'NEW', instruction, query: filename };
+  if (command) return { kind: command[1] === '/수정' ? 'REPLACEMENT' : 'NEW', instruction, query: filename };
   const create = /(?:작성(?:\s*해)?|만들어|써)\s*(?:줘요?|주세요|주십시오|부탁해요)[.!。！]?$/;
   if (create.test(input) && /(?:새\s*문서|신규\s*문서|새로운\s*문서)/.test(input)) {
     return { kind: 'NEW', instruction, query: '' };
@@ -26,21 +26,9 @@ export function proposalIntent(question: string): { kind: ProposalKind; instruct
   const subject = /^(.*?(?:절차|지침|정책|업무\s*사항|업무\s*항목|문서|매뉴얼))(?:에서|에|의|을|를|\s)/.exec(input)?.[1] ?? '';
   const edit = /(?:수정|개정|변경|갱신|추가|삭제|반영|보완)(?:\s*해)?\s*(?:줘요?|주세요|주십시오|부탁해요)[.!。！]?$|(?:고쳐|바꿔)\s*(?:줘요?|주세요|주십시오)[.!。！]?$/;
   if (edit.test(input) && (filename || subject)) {
-    return { kind: 'AMENDMENT', instruction, query: filename || (subject === '문서' ? '' : subject) };
+    return { kind: 'REPLACEMENT', instruction, query: filename || (subject === '문서' ? '' : subject) };
   }
   return null;
-}
-
-export function documentTargets(data: unknown): DocumentTarget[] {
-  if (!Array.isArray(data)) return [];
-  const targets = new Map<string, DocumentTarget>();
-  for (const hit of data.slice(0, 10)) {
-    const file = sourceFile(hit);
-    if (!file || targets.has(file.documentId) || typeof hit.title !== 'string' || typeof hit.path !== 'string'
-      || hit.path.startsWith('.approved/') || typeof hit.project !== 'string' || !hit.project) continue;
-    targets.set(file.documentId, { ...file, title: hit.title, path: hit.path, project: hit.project });
-  }
-  return [...targets.values()];
 }
 
 export async function knowledgeRequest<T>(session: LoginSession, path: string, signal: AbortSignal, body?: object): Promise<T> {

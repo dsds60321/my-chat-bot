@@ -62,6 +62,30 @@ class KnowledgeServiceTest {
         }
     }
 
+    @Test void explicitCommonFolderKeepsSqlSearchableDespiteProjectNamesInContent() throws Exception {
+        try (var knowledge = service()) {
+            Path doc = source("common/20261101_bin.md", "# 카드 BIN 최신화 SQL\nCREATE DEFINER=`syslink`@`%` TRIGGER BIN_UPDATE;");
+            assertThat(knowledge.syncNow().documents()).singleElement().satisfies(entry -> {
+                assertThat(entry.project()).isEqualTo("common");
+                assertThat(entry.state()).isEqualTo("ACTIVE");
+            });
+            assertThat(knowledge.search("BIN", Set.of("common"), 4)).isNotEmpty();
+            var hits = knowledge.search("BIN 최신화 SQL 알려줘", Set.of("common"), 4);
+            assertThat(hits).isNotEmpty().allMatch(hit -> hit.project().equals("common"));
+            assertThat(knowledge.search("MISSING_BIN_IDENTIFIER 최신화", Set.of("common"), 4)).isEmpty();
+            assertThat(knowledge.search("missing-bin.md 최신화", Set.of("common"), 4)).isEmpty();
+            var hit = hits.get(0);
+            assertThat(knowledge.download(hit.documentId(), hit.version(), Set.of("common"))).isPresent();
+            assertThat(knowledge.search("BIN", Set.of("syslink"), 4)).isEmpty();
+            assertThat(knowledge.download(hit.documentId(), hit.version(), Set.of("syslink"))).isEmpty();
+            var excluded = new com.mychatbot.security.AccessContext("user", Set.of("common"), false, Set.of("common/20261101_bin.md"));
+            assertThat(knowledge.search("BIN", excluded, 4)).isEmpty();
+            assertThat(knowledge.download(hit.documentId(), hit.version(), excluded)).isEmpty();
+            Files.writeString(doc, "# 카드 BIN 최신화 SQL\nsyslink paye2u UPDATED_BIN_PROCEDURE");
+            assertThat(knowledge.search("UPDATED_BIN_PROCEDURE", Set.of("common"), 4)).isNotEmpty();
+        }
+    }
+
     @Test void exactIdentifiersKoreanAndServerAcl() throws Exception {
         source("paye2u/tables.md", "# 결제 데이터베이스\nMCHT 테이블 mchtId VARCHAR 가맹점 식별자\n승인 취소 이력은 PAY_CANCL에 저장한다.");
         source("syslink/guide.md", "# 별도 연동\nMCHT 은행 연동 목록");

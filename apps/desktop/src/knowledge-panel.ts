@@ -1,10 +1,12 @@
 import { AuthenticationError, type LoginSession } from './session';
-import { documentTargets, knowledgeRequest, proposalIntent, type DocumentTarget, type Proposal, type ProposalDraft } from './knowledge';
-import { appendAttachments, safeAttachments, sourceName } from './sources';
+import { knowledgeRequest, proposalIntent, type Proposal, type ProposalDraft } from './knowledge';
+import { appendAttachments, safeAttachments } from './sources';
 import { downloadSource, previewSource } from './download';
 import { scrollingIndicator } from './scroll';
 import { trackFilePicker } from './file-picker';
-import { folderCatalog, folderCreation, folderRows, type FolderCatalog } from './folders';
+import { folderCatalog, folderCreation, documentTreeRows, type FolderCatalog } from './folders';
+import { setupDocumentPreview } from './document-preview';
+import { browsableDocuments, proposalScope, replacementFile, type BrowsableDocument } from './documents';
 
 const proposalPath = '/api/knowledge/proposals';
 const reviewPath = '/api/knowledge/admin/proposals';
@@ -19,11 +21,9 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
   const error = element('knowledge-error');
   const form = element<HTMLFormElement>('proposal-form');
   const kind = element<HTMLSelectElement>('proposal-kind');
-  const query = element<HTMLInputElement>('proposal-query');
   const project = element<HTMLInputElement>('proposal-project');
   const back = element<HTMLButtonElement>('close-knowledge');
   const instruction = element<HTMLTextAreaElement>('proposal-instruction');
-  const before = element('proposal-before');
   const draftTitle = element<HTMLInputElement>('proposal-draft-title');
   const after = element<HTMLTextAreaElement>('proposal-after');
   const consent = element<HTMLInputElement>('proposal-consent');
@@ -39,40 +39,66 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
   const rootAdd = element<HTMLButtonElement>('folder-root-add');
   let catalog: FolderCatalog = { folders: [], requests: [], canCreateDirectly: false, canCreateProject: false };
   let selectedFolder = '';
+  let documentFiles: BrowsableDocument[] = [];
   let parentFolder = '';
   let creationTrigger: HTMLButtonElement | null = null;
   const expanded = new Set<string>();
   const files = element<HTMLInputElement>('proposal-files');
   const descriptions = element('proposal-file-descriptions');
   const filePicker = trackFilePicker(files, window);
+  const replacement = element<HTMLInputElement>('replacement-file');
+  const replacementConsent = element<HTMLInputElement>('replacement-consent');
+  const replacementSubmit = element<HTMLButtonElement>('replacement-submit');
+  const replacementPicker = trackFilePicker(replacement, window);
   let view: View | null = null;
   let operation: AbortController | null = null;
-  let target: DocumentTarget | null = null;
+  let target: BrowsableDocument | null = null;
   let draft: ProposalDraft | null = null;
+  const preview = setupDocumentPreview(session, run, file => {
+    documentFiles = documentFiles.map(prior => prior.documentId === file.documentId ? file : prior);
+    chooseFile(file);
+  }, announce, expire);
   scrollingIndicator(panel);
 
   function report(message: string): void { error.textContent = message; error.hidden = !message; }
   function updateSubmit(): void { submit.disabled = !draft || !consent.checked || !after.value.trim() || !draftTitle.value.trim(); }
+  function updateReplacementSubmit(): void {
+    replacementSubmit.disabled = !replacementConsent.checked || !!replacementFile(replacement.files?.[0], target);
+    replacementSubmit.textContent = session.user?.admin ? '수정 파일로 바로 교체' : '교체 제안 제출';
+  }
   function clearDraft(): void {
-    draft = null; before.textContent = ''; draftTitle.value = ''; after.value = ''; consent.checked = false;
+    draft = null; draftTitle.value = ''; after.value = ''; consent.checked = false;
     element('proposal-draft').hidden = true; updateSubmit();
   }
+  function clearUploads(): void {
+    files.value = ''; descriptions.replaceChildren(); replacement.value = ''; replacementConsent.checked = false;
+    updateReplacementSubmit();
+  }
   function clearTargets(): void {
-    target = null; element('proposal-options').replaceChildren(); element('proposal-targets').hidden = true;
-    clearDraft();
+    target = null; preview.reset(); clearUploads(); clearDraft(); updateTargetHelp();
+  }
+  function updateTargetHelp(): void {
+    element('proposal-target-help').textContent = kind.value === 'new'
+      ? '왼쪽에서 폴더를 선택한 후 새 문서를 작성해 주세요.'
+      : target ? `대상 파일: ${target.path} · 원본을 다운로드해 직접 수정한 뒤 교체해 주세요.` : '왼쪽 목록에서 교체할 파일을 선택해 주세요. 원본을 다운로드해 직접 수정한 뒤 올려 주세요.';
   }
   function showKind(): void {
-    const isNew = kind.value === 'new';
-    element('proposal-target').hidden = isNew; folderPanel.hidden = !isNew;
-    element('folder-breadcrumb').hidden = !isNew;
-    clearDraft(); report('');
+    const isReplacement = kind.value === 'replace';
+    folderPanel.hidden = false;
+    element('replacement-fields').hidden = !isReplacement;
+    element('proposal-attachment-fields').hidden = isReplacement;
+    element('proposal-preview').hidden = isReplacement;
+    element('proposal-instruction-label').hidden = isReplacement;
+    instruction.hidden = isReplacement; instruction.disabled = isReplacement; instruction.required = !isReplacement;
+    if (kind.value === 'new') { target = null; preview.reset(); folderSearch.value = ''; }
+    clearDraft(); clearUploads(); updateTargetHelp(); report(''); renderFolders();
   }
   function setView(next: View | null): void {
     operation?.abort(); operation = null;
     form.inert = false; history.inert = false; folderPanel.inert = false; tabs.inert = false; back.disabled = false; panel.removeAttribute('aria-busy');
     view = next; panel.hidden = !next;
     form.hidden = next !== 'proposal'; history.hidden = next !== 'history' && next !== 'review' && next !== 'folders';
-    folderPanel.hidden = next !== 'proposal' || kind.value !== 'new';
+    folderPanel.hidden = next !== 'proposal';
     const tabViews: Record<string, View> = { 'knowledge-new': 'proposal', 'knowledge-own': 'history', 'knowledge-folders': 'folders', 'knowledge-review': 'review' };
     for (const [id, tab] of Object.entries(tabViews)) {
       const button = element(id);
@@ -84,9 +110,10 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
     changed();
   }
   function reset(): void {
+    preview.reset(); replacement.value = ''; replacementConsent.checked = false;
     files.value = ''; descriptions.replaceChildren();
     setView(null); folderCreate.hidden = true; form.reset(); clearTargets(); project.value = '';
-    selectedFolder = ''; parentFolder = ''; folderSearch.value = ''; expanded.clear(); tree.replaceChildren();
+    documentFiles = []; selectedFolder = ''; parentFolder = ''; folderSearch.value = ''; expanded.clear(); tree.replaceChildren();
     catalog = { folders: [], requests: [], canCreateDirectly: false, canCreateProject: false };
   }
   async function run(message: string, work: (signal: AbortSignal) => Promise<void>, mutating = false): Promise<void> {
@@ -111,37 +138,57 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
       }
     }
   }
-  function searchTargets(): void {
-    const value = query.value.trim();
-    if (!value) { report('대상 문서 이름이나 검색어를 입력해 주세요.'); query.focus(); return; }
-    void run('대상 문서를 찾고 있어요.', async signal => {
-      clearTargets();
-      const items = documentTargets(await knowledgeRequest<unknown>(session, `/api/search?q=${encodeURIComponent(value)}`, signal));
-      const options = element('proposal-options');
-      for (const item of items) {
-        const label = document.createElement('label');
-        const radio = document.createElement('input'); radio.type = 'radio'; radio.name = 'proposal-document';
-        const name = document.createElement('span'); name.textContent = sourceName(item);
-        const detail = document.createElement('small'); detail.textContent = `${item.path} · ${item.project}`;
-        name.append(detail); label.append(radio, name); options.append(label);
-        radio.addEventListener('change', () => { target = item; clearDraft(); report(''); });
-      }
-      element('proposal-targets').hidden = !items.length;
-      announce(items.length ? `문서 ${items.length}개를 찾았어요. 수정할 문서를 선택해 주세요.` : '일치하는 문서가 없어요. 다른 검색어를 입력해 주세요.');
-    });
-  }
-  function selectFolder(path: string): void {
+  function setFolderScope(path: string): void {
     selectedFolder = path;
     project.value = path.split('/')[0] ?? '';
     element('folder-breadcrumb').textContent = path ? path.split('/').join(' / ') : '왼쪽에서 문서를 등록할 폴더를 선택해 주세요.';
-    clearDraft(); report('');
+  }
+  function selectFolder(path: string): void {
+    if (path !== selectedFolder || target) {
+      if (target && kind.value !== 'new') instruction.value = '';
+      clearTargets();
+    }
+    setFolderScope(path); report('');
+  }
+  function chooseFile(file: BrowsableDocument): void {
+    const changed = target?.documentId !== file.documentId || target?.version !== file.version;
+    if (changed) {
+      if (target && kind.value !== 'new') instruction.value = '';
+      clearDraft(); clearUploads();
+    }
+    target = file; setFolderScope(file.path.substring(0, file.path.lastIndexOf('/')));
+    const parts = selectedFolder.split('/');
+    for (let i = 1; i <= parts.length; i++) expanded.add(parts.slice(0, i).join('/'));
+    replacement.accept = '.' + file.type;
+    updateReplacementSubmit(); updateTargetHelp(); report('');
+    folderCreate.hidden = true; renderFolders();
+    tree.querySelector<HTMLButtonElement>(`[data-document="${file.documentId}"]`)?.focus();
+    if (changed) void preview.show(file);
+    else element<HTMLDetailsElement>('document-preview').open = true;
   }
   function renderFolders(): void {
     tree.replaceChildren();
-    const rows = folderRows(catalog, expanded, folderSearch.value);
-    if (!rows.length) tree.append(text('p', folderSearch.value ? '일치하는 폴더가 없어요.' : '접근 가능한 폴더가 없어요.', 'status'));
+    const isNew = kind.value === 'new';
+    const label = isNew ? '폴더' : '폴더 및 파일';
+    element('folder-heading').textContent = isNew ? '프로젝트 및 폴더' : '프로젝트 및 파일';
+    folderSearch.placeholder = `${label} 검색`;
+    folderPanel.querySelector('label[for="folder-search"]')!.textContent = `${label} 검색`;
+    tree.setAttribute('aria-label', isNew ? '접근 가능한 프로젝트 및 폴더' : '접근 가능한 프로젝트, 폴더 및 파일');
+    folderPanel.querySelector('.folder-note')!.textContent = isNew
+      ? '문서를 추가할 폴더를 선택해 주세요.' : '접근 가능한 폴더와 파일만 표시됩니다. 파일을 선택하면 오른쪽에서 미리 볼 수 있어요.';
+    const rows = documentTreeRows(catalog, isNew ? [] : documentFiles, expanded, folderSearch.value);
+    if (!rows.length) tree.append(text('p', folderSearch.value ? `${label} 검색 결과가 없어요.` : `접근 가능한 ${label} 목록이 비어 있어요.`, 'status'));
     for (const row of rows) {
       const item = document.createElement('li');
+      if (row.kind === 'file') {
+        const file = documentFiles.find(file => file.documentId === row.documentId)!;
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'document-file';
+        button.style.setProperty('--folder-depth', String(row.depth)); button.textContent = row.name; button.title = row.path;
+        button.dataset.document = file.documentId;
+        const info = document.createElement('small'); info.textContent = `${file.type.toUpperCase()} · ${new Date(file.modified).toLocaleDateString('ko-KR')}`; button.append(info);
+        if (target?.documentId === file.documentId) button.setAttribute('aria-current', 'true');
+        button.addEventListener('click', () => chooseFile(file)); item.append(button); tree.append(item); continue;
+      }
       const line = document.createElement('div'); line.className = 'folder-row';
       line.style.setProperty('--folder-depth', String(row.depth));
       if (row.path === selectedFolder) line.classList.add('is-selected');
@@ -163,11 +210,11 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
         const badge = document.createElement('span'); badge.className = 'folder-badge'; badge.textContent = '승인 대기'; label.append(badge); line.append(label);
       } else {
         const choose = document.createElement('button'); choose.type = 'button'; choose.className = 'folder-select';
-        choose.title = row.path; choose.dataset.path = row.path; choose.setAttribute('aria-label', `${row.path}에 문서 등록`);
+        choose.title = row.path; choose.dataset.path = row.path; choose.setAttribute('aria-label', `${row.path} 폴더 선택`);
         if (row.path === selectedFolder) choose.setAttribute('aria-current', 'location');
         choose.append(icon, row.name);
         choose.addEventListener('click', () => {
-          selectFolder(row.path); folderCreate.hidden = true; renderFolders();
+          selectFolder(row.path); expanded.add(row.path); folderCreate.hidden = true; renderFolders();
           tree.querySelector<HTMLButtonElement>('[aria-current="location"]')?.focus();
         });
         const add = document.createElement('button'); add.type = 'button'; add.className = 'folder-add'; add.textContent = '+';
@@ -179,16 +226,17 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
     }
   }
   async function loadFolders(signal: AbortSignal, selected = selectedFolder): Promise<void> {
-    catalog = folderCatalog(await knowledgeRequest<unknown>(session, '/api/knowledge/folders', signal));
+    const [folders, documents] = await Promise.all([
+      knowledgeRequest<unknown>(session, '/api/knowledge/folders', signal),
+      knowledgeRequest<unknown>(session, '/api/knowledge/documents', signal),
+    ]);
+    catalog = folderCatalog(folders); documentFiles = browsableDocuments(documents);
     selectFolder(catalog.folders.includes(selected) ? selected : catalog.folders[0] ?? '');
-    for (const path of selectedFolder.split('/').slice(0, -1).map((_, index, parts) => parts.slice(0, index + 1).join('/'))) expanded.add(path);
+    const selectedParts = selectedFolder.split('/');
+    for (let i = 1; i <= selectedParts.length; i++) expanded.add(selectedParts.slice(0, i).join('/'));
     rootAdd.hidden = catalog.canCreateDirectly && !catalog.canCreateProject;
     renderFolders();
     announce(catalog.folders.length ? '' : '이 계정으로 작성할 수 있는 폴더가 없어요. 새 프로젝트 생성을 요청할 수 있어요.');
-  }
-  function refreshProjects(): void {
-    clearDraft();
-    void run('폴더 목록을 불러오고 있어요.', signal => loadFolders(signal));
   }
   function closeFolderCreate(): void {
     folderCreate.hidden = true;
@@ -253,12 +301,15 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
   function openProposal(intent?: NonNullable<ReturnType<typeof proposalIntent>>): void {
     if (!session.active || session.local) return;
     reset(); setView('proposal');
-    kind.value = intent?.kind === 'AMENDMENT' ? 'update' : 'new';
-    instruction.value = intent?.instruction ?? '';
-    query.value = intent?.query ?? '';
+    kind.value = intent?.kind === 'REPLACEMENT' ? 'replace' : 'new';
+    instruction.value = intent?.kind === 'NEW' ? intent.instruction : '';
+    folderSearch.value = intent?.query ?? '';
     showKind(); heading.focus();
-    if (kind.value === 'new') refreshProjects();
-    else if (query.value) searchTargets();
+    void run('폴더 목록을 불러오고 있어요.', async signal => {
+      await loadFolders(signal);
+      const matches = tree.querySelectorAll<HTMLButtonElement>('.document-file');
+      if (intent?.kind === 'REPLACEMENT' && intent.query && matches.length === 1) matches[0].click();
+    });
   }
   function text(tag: 'p' | 'h3' | 'summary', value: string, className?: string): HTMLElement {
     const node = document.createElement(tag); node.textContent = value;
@@ -276,7 +327,7 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
       item.append(text('summary', `${record.title} · ${state}`));
       item.append(text('p', [record.folderPath ?? record.project, record.sourceTitle, next === 'review' ? record.author : '', record.createdAt?.slice(0, 10)].filter(Boolean).join(' · '), 'status'));
       if (next === 'review' && record.sourceVersion) item.append(text('p', `원본 버전 ${record.sourceVersion.slice(0, 12)}`, 'status'));
-      item.append(text('h3', '제안 내용'), text('p', record.content, 'proposal-text'));
+      item.append(text('h3', record.kind === 'REPLACEMENT' ? '파일 교체 · 변경 내용' : '제안 내용'), text('p', record.content, 'proposal-text'));
       appendAttachments(item, safeAttachments(record.attachments), (file, preview) => {
         void run('첨부파일을 불러오고 있어요.', async signal => {
           const endpoint = `${proposalPath}/${encodeURIComponent(record.id)}/attachments/${file.documentId}`;
@@ -292,7 +343,7 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
           appendAction(item, record, next, 'approve', '승인');
           appendAction(item, record, next, 'reject', '반려');
         }
-      } else if (next === 'history' && ['PENDING_APPROVAL', 'APPROVED'].includes(record.state)) {
+      } else if (next === 'history' && (record.state === 'PENDING_APPROVAL' || (record.state === 'APPROVED' && record.kind !== 'REPLACEMENT'))) {
         appendAction(item, record, next, 'withdraw', '철회');
       }
       history.append(item);
@@ -353,36 +404,27 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
   element('open-history').addEventListener('click', () => openList('history'));
   element('open-review').addEventListener('click', () => openList('review'));
   back.addEventListener('click', () => { reset(); announce(''); element('prompt').focus(); });
-  element('proposal-search').addEventListener('click', searchTargets);
-  query.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); searchTargets(); }
-  });
-  query.addEventListener('input', clearTargets);
-  kind.addEventListener('change', () => {
-    showKind();
-    if (kind.value === 'new') refreshProjects();
-  });
-  for (const input of [project, instruction]) input.addEventListener('input', clearDraft);
+  kind.addEventListener('change', showKind);
+  for (const input of [project, instruction]) input.addEventListener('input', () => { clearDraft(); updateReplacementSubmit(); });
   for (const input of [after, draftTitle, consent]) input.addEventListener('input', updateSubmit);
   form.addEventListener('submit', event => {
     event.preventDefault();
-    const isNew = kind.value === 'new';
-    if (isNew ? !project.value : !target) { report(isNew ? '문서를 저장할 프로젝트를 선택해 주세요.' : '찾기에서 수정할 문서를 선택해 주세요.'); return; }
+    if (kind.value === 'replace') { submitReplacement(); return; }
+    if (kind.value !== 'new') return;
+    if (!project.value) { report('문서를 저장할 프로젝트를 선택해 주세요.'); return; }
     const value = instruction.value.trim();
-    if (!value) { report('바꾸거나 추가할 내용을 입력해 주세요.'); instruction.focus(); return; }
-    const scope = isNew ? { project: project.value, folderPath: selectedFolder } : { project: target!.project, sourceDocumentId: target!.documentId, sourceVersion: target!.version };
+    if (!value) { report('새 문서에 담을 내용을 입력해 주세요.'); instruction.focus(); return; }
+    const scope = proposalScope('new', selectedFolder, null);
     void run('검토할 초안을 만들고 있어요.', async signal => {
       clearDraft();
       const result = await knowledgeRequest<ProposalDraft>(session, `${proposalPath}/draft`, signal, { ...scope, instruction: value });
-      if (!result || result.project !== scope.project || result.kind !== (isNew ? 'NEW' : 'AMENDMENT')
-        || (isNew && result.folderPath !== scope.folderPath)
+      if (!result || result.project !== scope.project || result.kind !== 'NEW'
+        || result.folderPath !== scope.folderPath
         || (result.sourceDocumentId ?? undefined) !== scope.sourceDocumentId || (result.sourceVersion ?? undefined) !== scope.sourceVersion
-        || typeof result.title !== 'string' || typeof result.content !== 'string' || (!isNew && typeof result.before !== 'string')) {
+        || typeof result.title !== 'string' || typeof result.content !== 'string') {
         throw new Error('문서가 일치하는 초안을 받지 못했어요. 다시 시도해 주세요.');
       }
       draft = result;
-      before.textContent = result.before ?? '';
-      element('proposal-before-block').hidden = isNew;
       draftTitle.value = result.title;
       after.value = result.content;
       element('proposal-draft').hidden = false; updateSubmit();
@@ -395,12 +437,12 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
     });
   });
   submit.addEventListener('click', () => {
-    if (!draft || !consent.checked) return;
+    if (kind.value !== 'new' || draft?.kind !== 'NEW' || !consent.checked) return;
     const content = after.value.trim(); const label = draftTitle.value.trim();
     if (!content || content.length > 4000 || !label || label.length > 120) { report('제목은 1~120자, 내용은 1~4000자로 입력해 주세요.'); return; }
-    const { project, sourceDocumentId, sourceVersion, folderPath } = draft;
+    const { project, folderPath } = draft;
     void run('제안을 제출하고 있어요.', async signal => {
-      const proposal = { project, sourceDocumentId, sourceVersion, folderPath, title: label, content, consent: true };
+      const proposal = { project, folderPath, title: label, content, consent: true };
       const selected = Array.from(files.files ?? []);
       let body: object = proposal;
       if (selected.length) {
@@ -417,5 +459,28 @@ export function setupKnowledgePanel(session: LoginSession, changed: () => void, 
       openList('history'); announce(saved.state === 'APPROVED' ? '제안을 검색에 반영했어요.' : '승인 요청을 보냈어요. 내 제안에서 확인할 수 있어요.');
     }, true);
   });
-  return { get selectingFile() { return filePicker.active; }, get visible() { return view !== null; }, focus: () => heading.focus(), openProposal, reset };
+  replacement.addEventListener('change', () => {
+    report('');
+    const message = replacementFile(replacement.files?.[0], target);
+    if (message && replacement.files?.length) { replacement.value = ''; report(message); }
+    updateReplacementSubmit();
+  });
+  replacementConsent.addEventListener('change', updateReplacementSubmit);
+  function submitReplacement(): void {
+    const file = replacement.files?.[0];
+    const message = replacementFile(file, target);
+    if (message || !file || !target) { report(message || '교체할 파일을 확인해 주세요.'); return; }
+    if (!replacementConsent.checked) { report('파일 교체와 공유에 동의해 주세요.'); replacementConsent.focus(); return; }
+    const selected = target;
+    void run('파일 교체 제안을 제출하고 있어요.', async signal => {
+      const body = new FormData();
+      body.append('metadata', JSON.stringify({ ...proposalScope('replace', selectedFolder, selected), title: selected.title.slice(0, 120), consent: true }));
+      body.append('file', file);
+      const saved = await knowledgeRequest<Proposal>(session, '/api/knowledge/replacements', signal, body);
+      if (!saved || saved.kind !== 'REPLACEMENT') throw new Error('교체 결과를 확인하지 못했어요. 내 제안을 확인해 주세요.');
+      openList('history'); announce(saved.state === 'APPROVED' ? '수정 파일로 교체하고 이전 버전을 보관했어요.' : '교체 승인 요청을 보냈어요. 승인 전 원본은 유지됩니다.');
+    }, true);
+  }
+  replacementSubmit.addEventListener('click', submitReplacement);
+  return { get selectingFile() { return filePicker.active || replacementPicker.active; }, get visible() { return view !== null; }, focus: () => heading.focus(), openProposal, reset };
 }

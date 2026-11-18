@@ -210,7 +210,9 @@ document.addEventListener('pointerdown', event => {
   const target = event.target;
   if (target instanceof Node && !panel.contains(target) && !pet.contains(target)) closeOnOutsideClick();
 });
-window.addEventListener('blur', () => { if (!native) closeOnOutsideClick(); });
+window.addEventListener('blur', () => {
+  if (!native && !(document.activeElement instanceof HTMLIFrameElement && document.hasFocus())) closeOnOutsideClick();
+});
 
 function endPetDrag(): void {
   dragGeneration++;

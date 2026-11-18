@@ -75,7 +75,8 @@ class PublicationIsolationTest {
             assertThat(service.syncNow().healthy()).isTrue();
             good(service, original, b, healthy);
             assertThat(service.search("DIRECTORY_BYPASS_LOOKUP", admin, 4)).isEmpty();
-            assertThat(service.search("MANUAL_EDIT_LOOKUP", admin, 4)).isEmpty();
+            if (mode.equals("body")) assertThat(service.search("MANUAL_EDIT_LOOKUP", admin, 4)).hasSize(1);
+            else assertThat(service.search("MANUAL_EDIT_LOOKUP", admin, 4)).isEmpty();
         }
         try (var service = open()) {
             good(service, original, b, healthy);
@@ -120,7 +121,7 @@ class PublicationIsolationTest {
         }
     }
 
-    @Test void deletedTargetFolderDuringMigrationIsIsolatedAndReappearsWhenFolderIsRestored() throws Exception {
+    @Test void deletedMaterializedTargetFolderPurgesOwnerAndDoesNotRecreateBodyWhenFolderReturns() throws Exception {
         KnowledgeProposal damaged, healthy;
         Path privateFolder = Files.createDirectories(root.resolve("user/missing"));
         try (var service = open()) {
@@ -135,7 +136,8 @@ class PublicationIsolationTest {
             assertThat(hit(service, "ISOLATION_LOOKUP", healthy, admin)).isNotNull();
             Files.createDirectory(privateFolder);
             assertThat(service.syncNow().healthy()).isTrue();
-            assertThat(hit(service, "MISSING_TARGET_LOOKUP", damaged, admin)).isNotNull();
+            assertThat(service.search("MISSING_TARGET_LOOKUP", admin, 4)).isEmpty();
+            assertThat(service.ownProposals(admin)).noneMatch(proposal -> proposal.id().equals(damaged.id()));
         }
     }
 

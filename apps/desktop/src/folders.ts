@@ -48,3 +48,31 @@ export function folderCreation(parentPath: string, name: string): { parentPath: 
   }
   return { parentPath, name: label, path };
 }
+
+export type DocumentTreeRow = FolderRow & { kind: 'folder' | 'file'; documentId?: string };
+export function documentTreeRows(catalog: FolderCatalog, files: { path: string; documentId: string }[], expanded: Set<string>, query = ''): DocumentTreeRow[] {
+  const folders = folderRows(catalog, new Set(catalog.folders));
+  const actual = new Set(catalog.folders);
+  const all: DocumentTreeRow[] = folders.map(row => ({ ...row, kind: 'folder', children: row.children || files.some(file => file.path.startsWith(row.path + '/')) }));
+  for (const file of files) {
+    const parts = file.path.split('/'); const parent = parts.slice(0, -1).join('/');
+    if (parent && (!actual.has(parent) || parts.slice(0, -1).some((_, index) => !actual.has(parts.slice(0, index + 1).join('/'))))) continue;
+    all.push({ kind: 'file', path: file.path, name: parts.at(-1)!, depth: parts.length - 1, children: false, pending: false, documentId: file.documentId });
+  }
+  const filter = query.trim().normalize('NFC').toLocaleLowerCase();
+  const matching = all.filter(row => row.path.normalize('NFC').toLocaleLowerCase().includes(filter));
+  return all.filter(row => {
+    if (filter) return matching.some(match => match.path === row.path || match.path.startsWith(row.path + '/'));
+    const parts = row.path.split('/');
+    return parts.slice(0, -1).every((_, index) => expanded.has(parts.slice(0, index + 1).join('/')));
+  }).sort((a, b) => {
+    const left = a.path.split('/'); const right = b.path.split('/');
+    for (let i = 0; i < Math.min(left.length, right.length); i++) {
+      if (left[i] === right[i]) continue;
+      const leftFolder = i < left.length - 1 || a.kind === 'folder';
+      const rightFolder = i < right.length - 1 || b.kind === 'folder';
+      return leftFolder === rightFolder ? left[i].localeCompare(right[i], 'ko') : leftFolder ? -1 : 1;
+    }
+    return left.length - right.length;
+  });
+}

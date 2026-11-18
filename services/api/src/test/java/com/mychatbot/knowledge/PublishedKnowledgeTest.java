@@ -73,7 +73,7 @@ class PublishedKnowledgeTest {
         }
     }
 
-    @Test void withdrawalArchivesUnmodifiedCopiesAndKeepsEditedCopiesWithoutResurrectingEither() throws Exception {
+    @Test void withdrawalArchivesCurrentBytesForBothIntactAndEditedBodiesWithoutResurrectingEither() throws Exception {
         KnowledgeProposal intact, edited;
         String id, version;
         try (var service = open()) {
@@ -87,7 +87,7 @@ class PublishedKnowledgeTest {
             service.withdrawProposal(intact.id(), admin);
             service.withdrawProposal(edited.id(), admin);
             assertThat(Files.exists(body(intact))).isFalse();
-            assertThat(Files.readString(body(edited))).contains("MANUAL_EDIT_LOOKUP");
+            assertThat(body(edited)).doesNotExist();
             assertThat(service.syncNow().healthy()).isTrue();
             assertThat(service.search("MANUAL_EDIT_LOOKUP", admin, 4)).isEmpty();
             assertThat(service.search("WITHDRAW_COPY_LOOKUP", admin, 4)).isEmpty();

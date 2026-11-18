@@ -12,7 +12,9 @@ import java.util.*;
 /** Tracks only generated copies; canonical proposals and uploads remain in the submission store. */
 final class PublishedKnowledge {
     record OwnedFile(String path, String version) {}
-    record Publication(String id, String folder, List<OwnedFile> files) {}
+    record Publication(String id, String folder, List<OwnedFile> files, boolean active) {
+        Publication(String id, String folder, List<OwnedFile> files) { this(id, folder, files, false); }
+    }
     private final Path root;
     private final Path store;
     private final ObjectMapper json = new ObjectMapper();
@@ -66,13 +68,70 @@ final class PublishedKnowledge {
         });
     }
 
+    Optional<String> bodyPath(String id) {
+        Publication publication = publications == null ? null : publications.get(id);
+        if (publication == null) return Optional.empty();
+        String prefix = publication.folder().isEmpty() ? "" : publication.folder() + "/";
+        return publication.files().stream().map(OwnedFile::path)
+                .filter(path -> path.startsWith(prefix) && !path.substring(prefix.length()).contains("/")
+                        && path.endsWith("--" + id + ".md")).findFirst();
+    }
+
+    Optional<String> owner(String path) {
+        if (publications == null) return Optional.empty();
+        return publications.keySet().stream().filter(id -> bodyPath(id).filter(path::equals).isPresent()).findFirst();
+    }
+
+    boolean hasArchivedBody(String id) throws IOException {
+        String body = bodyPath(id).orElse(null);
+        if (body == null) return false;
+        Path directory = store.resolve("published-history").resolve(id);
+        KnowledgeService.rejectSymlinkParents(directory);
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return false;
+        try (var generations = Files.list(directory)) {
+            for (Path generation : generations.toList()) {
+                if (!generation.getFileName().toString().matches("[0-9a-f]{64}")) continue;
+                Path file = generation.resolve(body);
+                KnowledgeService.rejectSymlinkParents(file);
+                if (Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) return true;
+            }
+        }
+        return false;
+    }
+
+    boolean active(String id) { return publications != null && publications.containsKey(id) && publications.get(id).active(); }
+
+    void active(String id, boolean active) throws IOException {
+        Publication previous = publications.get(id);
+        if (previous == null || previous.active() == active) return;
+        publications.put(id, new Publication(id, previous.folder(), previous.files(), active));
+        try { save(); } catch (IOException failure) { publications.put(id, previous); throw failure; }
+    }
+
+    List<String> paths(String id) {
+        Publication publication = publications == null ? null : publications.get(id);
+        return publication == null ? List.of() : publication.files().stream().map(OwnedFile::path).toList();
+    }
+
+    boolean pathsAllowed(String id, java.util.function.Predicate<String> allowed) {
+        if (publications == null) return false;
+        Publication publication = publications.get(id);
+        return publication == null || publication.files().stream().allMatch(file -> allowed.test(file.path()));
+    }
+
     Set<String> ids() { return Set.copyOf(publications.keySet()); }
 
     boolean ready(KnowledgeProposal proposal) {
         Publication publication = publications == null ? null : publications.get(proposal.id());
         if (publication == null) return false;
         try {
-            for (OwnedFile owned : publication.files()) if (!matches(root.resolve(owned.path()), owned.version())) return false;
+            for (OwnedFile owned : publication.files()) {
+                Path file = root.resolve(owned.path());
+                KnowledgeService.rejectSymlinkParents(file);
+                if (bodyPath(proposal.id()).filter(owned.path()::equals).isPresent()) {
+                    if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) > DocumentExtractor.MAX_BYTES) return false;
+                } else if (!matches(file, owned.version())) return false;
+            }
             for (var attachment : proposal.attachments()) {
                 if (!attachment.documentId().matches("[0-9a-f]{64}") || !attachment.version().matches("[0-9a-f]{64}")
                         || !matches(store.resolve("attachments").resolve(attachment.documentId()), attachment.version())) return false;
@@ -156,12 +215,28 @@ final class PublishedKnowledge {
             write(path, file.getValue(), false);
         }
         if (!ready(proposal)) throw new IOException("publication-incomplete");
+        active(proposal.id(), true);
     }
 
     void archive(String id) throws IOException {
         load();
         Publication publication = publications.get(id);
         if (publication == null) return;
+        List<OwnedFile> current = new ArrayList<>();
+        for (OwnedFile owned : publication.files()) {
+            Path path = root.resolve(owned.path());
+            KnowledgeService.rejectSymlinkParents(path);
+            if (bodyPath(id).filter(owned.path()::equals).isPresent() && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                if (Files.size(path) > DocumentExtractor.MAX_BYTES) throw new IOException("publication-body-limit");
+                current.add(new OwnedFile(owned.path(), hash(Files.readAllBytes(path))));
+            } else current.add(owned);
+        }
+        if (publication.active() || !current.equals(publication.files())) {
+            Publication previous = publication;
+            publication = new Publication(id, publication.folder(), List.copyOf(current), false);
+            publications.put(id, publication);
+            try { save(); } catch (IOException failure) { publications.put(id, previous); throw failure; }
+        }
         String generation = hash(json.writeValueAsBytes(publication.files()));
         for (OwnedFile owned : publication.files()) {
             Path source = root.resolve(owned.path());
@@ -175,6 +250,64 @@ final class PublishedKnowledge {
             }
             if (!matches(destination, owned.version())) throw new IOException("publication-archive-conflict");
             if (matches(source, owned.version())) Files.delete(source);
+        }
+    }
+
+    void purge(String id) throws IOException { purge(id, false); }
+
+    void purge(String id, boolean preserveRecreatedBody) throws IOException {
+        load();
+        if (!UUID.fromString(id).toString().equals(id)) throw new IOException("publication-id-invalid");
+        Publication publication = publications.get(id);
+        if (publication != null) {
+            String preserved = preserveRecreatedBody ? bodyPath(id).orElse(null) : null;
+            for (OwnedFile owned : publication.files()) {
+                if (owned.path().equals(preserved)) continue;
+                Path path = root.resolve(owned.path());
+                KnowledgeService.rejectSymlinkParents(path);
+                if (Files.exists(path, LinkOption.NOFOLLOW_LINKS) && !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) throw new IOException("publication-delete-conflict");
+            }
+            for (OwnedFile owned : publication.files()) {
+                if (!owned.path().equals(preserved)) Files.deleteIfExists(root.resolve(owned.path()));
+            }
+            Path group = root.resolve((publication.folder().isEmpty() ? "" : publication.folder() + "/") + "attachments/" + id);
+            KnowledgeService.rejectSymlinkParents(group);
+            if (Files.exists(group, LinkOption.NOFOLLOW_LINKS)) Files.delete(group);
+        }
+        Path archived = store.resolve("published-history").resolve(id);
+        KnowledgeService.rejectSymlinkParents(archived);
+        if (Files.exists(archived, LinkOption.NOFOLLOW_LINKS)) {
+            if (publication == null) throw new IOException("publication-history-owner-missing");
+            Publication owned = publication;
+            Files.walkFileTree(archived, new SimpleFileVisitor<>() {
+                @Override public FileVisitResult preVisitDirectory(Path directory, java.nio.file.attribute.BasicFileAttributes attributes) throws IOException {
+                    KnowledgeService.rejectSymlinkParents(directory);
+                    if (directory.equals(archived)) return FileVisitResult.CONTINUE;
+                    Path relative = archived.relativize(directory);
+                    if (!relative.getName(0).toString().matches("[0-9a-f]{64}")) throw new IOException("publication-history-path-invalid");
+                    return FileVisitResult.CONTINUE;
+                }
+                @Override public FileVisitResult visitFile(Path path, java.nio.file.attribute.BasicFileAttributes attributes) throws IOException {
+                    KnowledgeService.rejectSymlinkParents(path);
+                    Path relative = archived.relativize(path);
+                    if (!attributes.isRegularFile() || relative.getNameCount() < 2
+                            || !relative.getName(0).toString().matches("[0-9a-f]{64}")
+                            || !ownedPath(owned, relative.subpath(1, relative.getNameCount()).toString().replace('\\', '/'))) {
+                        throw new IOException("publication-history-path-invalid");
+                    }
+                    Files.delete(path);
+                    return FileVisitResult.CONTINUE;
+                }
+                @Override public FileVisitResult postVisitDirectory(Path directory, IOException failure) throws IOException {
+                    if (failure != null) throw failure;
+                    Files.delete(directory);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        }
+        if (publication != null) {
+            publications.remove(id);
+            try { save(); } catch (IOException failure) { publications.put(id, publication); throw failure; }
         }
     }
 
@@ -210,7 +343,7 @@ final class PublishedKnowledge {
 
     private static boolean matches(Path path, String expected) throws IOException {
         KnowledgeService.rejectSymlinkParents(path);
-        return Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && Files.size(path) <= AttachmentImage.MAX_BYTES
+        return Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && Files.size(path) <= DocumentExtractor.MAX_BYTES
                 && hash(Files.readAllBytes(path)).equals(expected);
     }
 

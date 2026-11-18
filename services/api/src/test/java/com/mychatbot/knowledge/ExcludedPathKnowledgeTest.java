@@ -105,7 +105,7 @@ class ExcludedPathKnowledgeTest {
             assertThat(knowledge.ownProposals(new AccessContext("author", Set.of("user"), false, Set.of("user")))).isEmpty();
         }
     }
-    @Test void deletedSourceHistoryAndOwnAttachmentsRemainAvailableWithoutExclusions() throws Exception {
+    @Test void deletedSourceRemovesOwnProposalAndAttachmentsEvenWithoutExclusions() throws Exception {
         var original = source("user/ghkang/private.md", "# 문서\nDELETED_SOURCE_LOOKUP");
         var author = new AccessContext("author", Set.of("user"));
         try (var knowledge = open()) {
@@ -116,9 +116,9 @@ class ExcludedPathKnowledgeTest {
                     List.of(new KnowledgeService.Upload(attachment, "notes.txt", "업무 설명")));
             Files.delete(original);
             knowledge.syncNow();
-            assertThat(knowledge.ownProposals(author)).extracting(KnowledgeProposal::id).contains(pending.id());
+            assertThat(knowledge.ownProposals(author)).extracting(KnowledgeProposal::id).doesNotContain(pending.id());
             var file = pending.attachments().get(0);
-            assertThat(knowledge.proposalAttachment(pending.id(), file.documentId(), file.version(), author, false)).isPresent();
+            assertThat(knowledge.proposalAttachment(pending.id(), file.documentId(), file.version(), author, false)).isEmpty();
         }
     }
 

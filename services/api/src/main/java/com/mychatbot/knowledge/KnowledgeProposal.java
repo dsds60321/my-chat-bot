@@ -19,7 +19,7 @@ public record KnowledgeProposal(String id, Kind kind, String project, String sou
 
     public record Attachment(String documentId, String version, String filename, String description, boolean image) {}
 
-    public enum Kind { NEW, AMENDMENT }
+    public enum Kind { NEW, AMENDMENT, REPLACEMENT }
     public enum State { PENDING_APPROVAL, APPROVED, REJECTED, WITHDRAWN }
 
     KnowledgeProposal withState(State next, String time) {
